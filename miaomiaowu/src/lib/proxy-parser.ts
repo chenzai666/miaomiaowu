@@ -406,8 +406,15 @@ function parseShadowsocks(url: string): ProxyNode | null {
     // 格式4: method:base64(password)@server:port (密码部分base64编码)
     if (mainPart.includes('@')) {
       const atIndex = mainPart.lastIndexOf('@')
-      const authPart = mainPart.substring(0, atIndex)
+      let authPart = mainPart.substring(0, atIndex)
       const serverPart = mainPart.substring(atIndex + 1)
+
+      // URL 解码 authPart，处理 %3A 等编码字符
+      try {
+        authPart = decodeURIComponent(authPart)
+      } catch {
+        // 解码失败则保持原样
+      }
 
       // 从最后一个冒号分割服务器地址，支持IPv6
       const lastColonIndex = serverPart.lastIndexOf(':')

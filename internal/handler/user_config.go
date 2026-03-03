@@ -30,6 +30,9 @@ type userConfigRequest struct {
 	ClientCompatibilityMode bool    `json:"client_compatibility_mode"` // Auto-filter incompatible nodes for clients
 	SilentMode              bool    `json:"silent_mode"`               // Silent mode: return 404 for all requests except subscription
 	SilentModeTimeout       int     `json:"silent_mode_timeout"`       // Minutes to allow access after subscription fetch
+	EnableSubInfoNodes      bool    `json:"enable_sub_info_nodes"`     // Enable subscription info nodes
+	SubInfoExpirePrefix     string  `json:"sub_info_expire_prefix"`    // Prefix for expire time node
+	SubInfoTrafficPrefix    string  `json:"sub_info_traffic_prefix"`   // Prefix for remaining traffic node
 }
 
 type userConfigResponse struct {
@@ -50,6 +53,9 @@ type userConfigResponse struct {
 	ClientCompatibilityMode bool    `json:"client_compatibility_mode"` // Auto-filter incompatible nodes for clients
 	SilentMode              bool    `json:"silent_mode"`               // Silent mode: return 404 for all requests except subscription
 	SilentModeTimeout       int     `json:"silent_mode_timeout"`       // Minutes to allow access after subscription fetch
+	EnableSubInfoNodes      bool    `json:"enable_sub_info_nodes"`     // Enable subscription info nodes
+	SubInfoExpirePrefix     string  `json:"sub_info_expire_prefix"`    // Prefix for expire time node
+	SubInfoTrafficPrefix    string  `json:"sub_info_traffic_prefix"`   // Prefix for remaining traffic node
 }
 
 func NewUserConfigHandler(repo *storage.TrafficRepository) http.Handler {
@@ -105,6 +111,9 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 				ClientCompatibilityMode: systemConfig.ClientCompatibilityMode,
 				SilentMode:              systemConfig.SilentMode,
 				SilentModeTimeout:       systemConfig.SilentModeTimeout,
+				EnableSubInfoNodes:      systemConfig.EnableSubInfoNodes,
+				SubInfoExpirePrefix:     systemConfig.SubInfoExpirePrefix,
+				SubInfoTrafficPrefix:    systemConfig.SubInfoTrafficPrefix,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -133,6 +142,9 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 		ClientCompatibilityMode: systemConfig.ClientCompatibilityMode,
 		SilentMode:              systemConfig.SilentMode,
 		SilentModeTimeout:       systemConfig.SilentModeTimeout,
+		EnableSubInfoNodes:      systemConfig.EnableSubInfoNodes,
+		SubInfoExpirePrefix:     systemConfig.SubInfoExpirePrefix,
+		SubInfoTrafficPrefix:    systemConfig.SubInfoTrafficPrefix,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -217,11 +229,22 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 	if silentModeTimeout <= 0 {
 		silentModeTimeout = 15
 	}
+	subInfoExpirePrefix := payload.SubInfoExpirePrefix
+	if subInfoExpirePrefix == "" {
+		subInfoExpirePrefix = "📅过期时间"
+	}
+	subInfoTrafficPrefix := payload.SubInfoTrafficPrefix
+	if subInfoTrafficPrefix == "" {
+		subInfoTrafficPrefix = "⌛剩余流量"
+	}
 	systemConfig := storage.SystemConfig{
 		ProxyGroupsSourceURL:    proxyGroupsSourceURL,
 		ClientCompatibilityMode: payload.ClientCompatibilityMode,
 		SilentMode:              payload.SilentMode,
 		SilentModeTimeout:       silentModeTimeout,
+		EnableSubInfoNodes:      payload.EnableSubInfoNodes,
+		SubInfoExpirePrefix:     subInfoExpirePrefix,
+		SubInfoTrafficPrefix:    subInfoTrafficPrefix,
 	}
 	if err := repo.UpdateSystemConfig(r.Context(), systemConfig); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("update system config: %w", err))
@@ -246,6 +269,9 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 		ClientCompatibilityMode: payload.ClientCompatibilityMode,
 		SilentMode:              payload.SilentMode,
 		SilentModeTimeout:       silentModeTimeout,
+		EnableSubInfoNodes:      payload.EnableSubInfoNodes,
+		SubInfoExpirePrefix:     subInfoExpirePrefix,
+		SubInfoTrafficPrefix:    subInfoTrafficPrefix,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

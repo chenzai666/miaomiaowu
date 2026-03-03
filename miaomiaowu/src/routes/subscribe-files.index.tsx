@@ -1208,7 +1208,7 @@ function SubscribeFilesPage() {
     queryKey: ['nodes'],
     queryFn: async () => {
       const response = await api.get('/api/admin/nodes')
-      return response.data as { nodes: Array<{ id: number; node_name: string }> }
+      return response.data as { nodes: Array<{ id: number; node_name: string; tag?: string }> }
     },
     enabled: Boolean(editNodesDialogOpen && auth.accessToken),
     refetchOnWindowFocus: false,
@@ -2230,11 +2230,22 @@ function SubscribeFilesPage() {
     }
   }
 
-  // 计算可用节点
+  // 计算可用节点（按节点管理的排序顺序）
   const availableNodes = useMemo(() => {
     if (!nodesQuery.data?.nodes) return []
 
-    const allNodeNames = nodesQuery.data.nodes.map(n => n.node_name)
+    // 先按 node_order 排序节点
+    const nodeOrder = userConfigQuery.data?.node_order || []
+    const orderMap = new Map<number, number>()
+    nodeOrder.forEach((id, index) => orderMap.set(id, index))
+
+    const sortedNodes = [...nodesQuery.data.nodes].sort((a, b) => {
+      const aOrder = orderMap.get(a.id) ?? Infinity
+      const bOrder = orderMap.get(b.id) ?? Infinity
+      return aOrder - bOrder
+    })
+
+    const allNodeNames = sortedNodes.map(n => n.node_name)
 
     if (showAllNodes) {
       return allNodeNames
@@ -2248,7 +2259,7 @@ function SubscribeFilesPage() {
 
     // 只返回未使用的节点
     return allNodeNames.filter(name => !usedNodes.has(name))
-  }, [nodesQuery.data, proxyGroups, showAllNodes])
+  }, [nodesQuery.data, proxyGroups, showAllNodes, userConfigQuery.data?.node_order])
 
   // 处理编辑节点对话框关闭
   const handleEditNodesDialogOpenChange = (open: boolean) => {

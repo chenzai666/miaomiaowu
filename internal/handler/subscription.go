@@ -684,6 +684,31 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 							// 先修复 WireGuard 节点的 allowed-ips 字段
 							fixWireGuardAllowedIPs(proxiesNode)
 							reorderProxies(proxiesNode)
+
+							// 注入订阅信息节点（过期时间和剩余流量）
+							if h.repo != nil {
+								sysConfig, cfgErr := h.repo.GetSystemConfig(r.Context())
+								if cfgErr == nil && sysConfig.EnableSubInfoNodes {
+									// 计算剩余流量
+									var remainingTraffic int64
+									if hasTrafficInfo || externalTrafficLimit > 0 {
+										includeProbeTraffic := !probeBindingEnabled || usesProbeNodes
+										if includeProbeTraffic && hasTrafficInfo {
+											remainingTraffic = (totalLimit + externalTrafficLimit) - (totalUsed + externalTrafficUsed)
+										} else {
+											remainingTraffic = externalTrafficLimit - externalTrafficUsed
+										}
+									}
+									// 获取过期时间
+									var expireAt *time.Time
+									if hasSubscribeFile {
+										expireAt = subscribeFile.ExpireAt
+									}
+									// 在 proxies 数组开头插入信息节点
+									infoNodes := createSubInfoNodes(sysConfig, expireAt, remainingTraffic)
+									proxiesNode.Content = append(infoNodes, proxiesNode.Content...)
+								}
+							}
 						}
 						break
 					}
@@ -1806,4 +1831,61 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 	logger.Info("[模板生成] 模板处理完成", "subscribe", subscribeFile.Name, "template", subscribeFile.TemplateFilename, "result_bytes", len(result))
 
 	return []byte(result), nil
+}
+
+// createSubInfoNodes creates subscription info nodes (expire time and remaining traffic)
+func createSubInfoNodes(config storage.SystemConfig, expireAt *time.Time, remainingTraffic int64) []*yaml.Node {
+	var nodes []*yaml.Node
+
+	// Expire time node
+	expireName := config.SubInfoExpirePrefix + " "
+	if expireAt != nil {
+		expireName += expireAt.Format("2006-01-02")
+	} else {
+		expireName += "永久"
+	}
+
+	// Remaining traffic node
+	trafficName := config.SubInfoTrafficPrefix + " " + formatTrafficSize(remainingTraffic)
+
+	// Create dummy SS nodes
+	createDummyNode := func(name string) *yaml.Node {
+		return &yaml.Node{
+			Kind: yaml.MappingNode,
+			Content: []*yaml.Node{
+				{Kind: yaml.ScalarNode, Value: "name"},
+				{Kind: yaml.ScalarNode, Value: name},
+				{Kind: yaml.ScalarNode, Value: "type"},
+				{Kind: yaml.ScalarNode, Value: "ss"},
+				{Kind: yaml.ScalarNode, Value: "server"},
+				{Kind: yaml.ScalarNode, Value: "sub.info.node"},
+				{Kind: yaml.ScalarNode, Value: "port"},
+				{Kind: yaml.ScalarNode, Value: "443", Tag: "!!int"},
+				{Kind: yaml.ScalarNode, Value: "password"},
+				{Kind: yaml.ScalarNode, Value: "SubInfoNode"},
+				{Kind: yaml.ScalarNode, Value: "cipher"},
+				{Kind: yaml.ScalarNode, Value: "aes-128-gcm"},
+			},
+		}
+	}
+
+	nodes = append(nodes, createDummyNode(expireName), createDummyNode(trafficName))
+	return nodes
+}
+
+// formatTrafficSize formats bytes to human readable format (GB/MB/KB)
+func formatTrafficSize(bytes int64) string {
+	if bytes <= 0 {
+		return "0B"
+	}
+	gb := float64(bytes) / (1024 * 1024 * 1024)
+	if gb >= 1 {
+		return fmt.Sprintf("%.2fGB", gb)
+	}
+	mb := float64(bytes) / (1024 * 1024)
+	if mb >= 1 {
+		return fmt.Sprintf("%.2fMB", mb)
+	}
+	kb := float64(bytes) / 1024
+	return fmt.Sprintf("%.2fKB", kb)
 }

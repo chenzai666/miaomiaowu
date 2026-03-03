@@ -81,9 +81,10 @@ const DragStateContext = createContext<{ isActiveDragging: boolean }>({ isActive
 interface ProxyTypeSelectorProps {
   group: ProxyGroup
   onChange: (updatedGroup: ProxyGroup) => void
+  onClose?: () => void
 }
 
-const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, onChange }: ProxyTypeSelectorProps) {
+const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, onChange, onClose }: ProxyTypeSelectorProps) {
   const types = [
     { value: 'select', label: '手动选择', hasUrl: false, hasStrategy: false },
     { value: 'url-test', label: '自动选择', hasUrl: true, hasStrategy: false },
@@ -113,6 +114,9 @@ const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, onChange }: P
     }
 
     onChange(updatedGroup)
+    if (type !== 'load-balance') {
+      onClose?.()
+    }
   }
 
   return (
@@ -320,6 +324,8 @@ const SortableCard = memo(function SortableCard({
 }: SortableCardProps) {
   // 从 context 获取拖拽状态
   const { isActiveDragging } = useContext(DragStateContext)
+  // Popover 受控状态
+  const [typePopoverOpen, setTypePopoverOpen] = useState(false)
   const {
     attributes,
     listeners,
@@ -397,7 +403,7 @@ const SortableCard = memo(function SortableCard({
           </div>
           {!isEditing && (
             <div className='flex items-center gap-1'>
-              <Popover>
+              <Popover open={typePopoverOpen} onOpenChange={setTypePopoverOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     variant='ghost'
@@ -412,6 +418,7 @@ const SortableCard = memo(function SortableCard({
                   <ProxyTypeSelector
                     group={group}
                     onChange={(updatedGroup) => onGroupTypeChange(group.name, updatedGroup)}
+                    onClose={() => setTypePopoverOpen(false)}
                   />
                 </PopoverContent>
               </Popover>

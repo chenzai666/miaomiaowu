@@ -582,6 +582,14 @@ function NodesPage() {
     } catch {}
   }, [tagFilter])
 
+  // 当标签筛选变化时，自动填入对应的标签
+  useEffect(() => {
+    if (tagFilter !== 'all') {
+      setManualTag(tagFilter)
+      setSubscriptionTag(tagFilter)
+    }
+  }, [tagFilter])
+
   // 保存选中节点状态到 localStorage
   useEffect(() => {
     try {
@@ -1602,8 +1610,18 @@ function NodesPage() {
 
     setTempSubGenerating(true)
     try {
-      // 获取节点的 clash 配置
-      const nodesData = savedNodes.filter(n => nodeIds.includes(n.id))
+      // 获取节点的 clash 配置（按 nodeOrder 排序）
+      const nodeIdsSet = new Set(nodeIds)
+      // 直接从 savedNodes 获取，按 nodeOrder 排序
+      const orderMap = new Map<number, number>()
+      nodeOrder.forEach((id, index) => orderMap.set(id, index))
+      const nodesData = savedNodes
+        .filter(n => nodeIdsSet.has(n.id))
+        .sort((a, b) => {
+          const orderA = orderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER
+          const orderB = orderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER
+          return orderA - orderB
+        })
       const proxies = nodesData.map(node => {
         try {
           return JSON.parse(node.clash_config)
@@ -1630,7 +1648,7 @@ function NodesPage() {
     } finally {
       setTempSubGenerating(false)
     }
-  }, [selectedNodeIds, savedNodes, tempSubMaxAccess, tempSubExpireSeconds])
+  }, [selectedNodeIds, savedNodes, nodeOrder, tempSubMaxAccess, tempSubExpireSeconds])
 
   // 自动生成临时订阅：Dialog 打开时或参数变化时自动生成
   useEffect(() => {
@@ -2469,6 +2487,20 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                         <Label htmlFor='manual-tag' className='text-sm font-medium'>
                           节点标签
                         </Label>
+                        {allUniqueTags.length > 0 && (
+                          <div className='flex flex-wrap gap-1.5'>
+                            {allUniqueTags.map((tag) => (
+                              <Badge
+                                key={tag}
+                                variant={manualTag === tag ? 'default' : 'outline'}
+                                className='cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors text-xs'
+                                onClick={() => setManualTag(tag)}
+                              >
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                         <Input
                           id='manual-tag'
                           placeholder='手动输入'
@@ -2533,6 +2565,20 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                         <Label htmlFor='subscription-tag' className='text-sm font-medium'>
                           节点标签
                         </Label>
+                        {allUniqueTags.length > 0 && (
+                          <div className='flex flex-wrap gap-1.5'>
+                            {allUniqueTags.map((tag) => (
+                              <Badge
+                                key={tag}
+                                variant={subscriptionTag === tag ? 'default' : 'outline'}
+                                className='cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors text-xs'
+                                onClick={() => setSubscriptionTag(tag)}
+                              >
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                         <div className='flex items-center gap-4'>
                           <Input
                             id='subscription-tag'

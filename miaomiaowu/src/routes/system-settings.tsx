@@ -22,6 +22,27 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
 import { useSyncProxyGroupCategories } from '@/hooks/use-proxy-groups'
 
+interface UserConfig {
+  force_sync_external: boolean
+  match_rule: string
+  sync_scope: string
+  keep_node_name: boolean
+  cache_expire_minutes: number
+  sync_traffic: boolean
+  enable_probe_binding: boolean
+  enable_short_link: boolean
+  template_version: string
+  enable_proxy_provider: boolean
+  proxy_groups_source_url: string
+  client_compatibility_mode: boolean
+  silent_mode: boolean
+  silent_mode_timeout: number
+  node_name_filter: string
+  enable_sub_info_nodes: boolean
+  sub_info_expire_prefix: string
+  sub_info_traffic_prefix: string
+}
+
 export const Route = createFileRoute('/system-settings')({
   beforeLoad: () => {
     const token = useAuthStore.getState().auth.accessToken
@@ -50,6 +71,9 @@ function SystemSettingsPage() {
   const [silentMode, setSilentMode] = useState(false)
   const [silentModeTimeout, setSilentModeTimeout] = useState(15)
   const [nodeNameFilter, setNodeNameFilter] = useState('剩余|流量|到期|订阅|时间|重置')
+  const [enableSubInfoNodes, setEnableSubInfoNodes] = useState(false)
+  const [subInfoExpirePrefix, setSubInfoExpirePrefix] = useState('📅过期时间')
+  const [subInfoTrafficPrefix, setSubInfoTrafficPrefix] = useState('⌛剩余流量')
 
   // Sync proxy group categories mutation
   const syncProxyGroupsMutation = useSyncProxyGroupCategories()
@@ -58,23 +82,7 @@ function SystemSettingsPage() {
     queryKey: ['user-config'],
     queryFn: async () => {
       const response = await api.get('/api/user/config')
-      return response.data as {
-        force_sync_external: boolean
-        match_rule: string
-        sync_scope: string
-        keep_node_name: boolean
-        cache_expire_minutes: number
-        sync_traffic: boolean
-        enable_probe_binding: boolean
-        enable_short_link: boolean
-        template_version: string
-        enable_proxy_provider: boolean
-        proxy_groups_source_url: string
-        client_compatibility_mode: boolean
-        silent_mode: boolean
-        silent_mode_timeout: number
-        node_name_filter: string
-      }
+      return response.data as UserConfig
     },
     enabled: Boolean(auth.accessToken),
     staleTime: 5 * 60 * 1000,
@@ -97,27 +105,14 @@ function SystemSettingsPage() {
       setSilentMode(userConfig.silent_mode || false)
       setSilentModeTimeout(userConfig.silent_mode_timeout || 15)
       setNodeNameFilter(userConfig.node_name_filter || '剩余|流量|到期|订阅|时间|重置')
+      setEnableSubInfoNodes(userConfig.enable_sub_info_nodes || false)
+      setSubInfoExpirePrefix(userConfig.sub_info_expire_prefix || '📅过期时间')
+      setSubInfoTrafficPrefix(userConfig.sub_info_traffic_prefix || '⌛剩余流量')
     }
   }, [userConfig])
 
   const updateConfigMutation = useMutation({
-    mutationFn: async (data: {
-      force_sync_external: boolean
-      match_rule: string
-      sync_scope: string
-      keep_node_name: boolean
-      cache_expire_minutes: number
-      sync_traffic: boolean
-      enable_probe_binding: boolean
-      enable_short_link: boolean
-      template_version: string
-      enable_proxy_provider: boolean
-      proxy_groups_source_url: string
-      client_compatibility_mode: boolean
-      silent_mode: boolean
-      silent_mode_timeout: number
-      node_name_filter: string
-    }) => {
+    mutationFn: async (data: UserConfig) => {
       await api.put('/api/user/config', data)
     },
     onSuccess: (_data, variables) => {
@@ -141,6 +136,9 @@ function SystemSettingsPage() {
       setSilentMode(variables.silent_mode)
       setSilentModeTimeout(variables.silent_mode_timeout)
       setNodeNameFilter(variables.node_name_filter)
+      setEnableSubInfoNodes(variables.enable_sub_info_nodes)
+      setSubInfoExpirePrefix(variables.sub_info_expire_prefix)
+      setSubInfoTrafficPrefix(variables.sub_info_traffic_prefix)
       toast.success('设置已更新')
     },
     onError: (error) => {
@@ -150,23 +148,7 @@ function SystemSettingsPage() {
   })
 
   // 通用的更新配置方法
-  const updateConfig = (updates: Partial<{
-    force_sync_external: boolean
-    match_rule: string
-    sync_scope: string
-    keep_node_name: boolean
-    cache_expire_minutes: number
-    sync_traffic: boolean
-    enable_probe_binding: boolean
-    enable_short_link: boolean
-    template_version: string
-    enable_proxy_provider: boolean
-    proxy_groups_source_url: string
-    client_compatibility_mode: boolean
-    silent_mode: boolean
-    silent_mode_timeout: number
-    node_name_filter: string
-  }>) => {
+  const updateConfig = (updates: Partial<UserConfig>) => {
     updateConfigMutation.mutate({
       force_sync_external: forceSyncExternal,
       match_rule: matchRule,
@@ -183,6 +165,9 @@ function SystemSettingsPage() {
       silent_mode: silentMode,
       silent_mode_timeout: silentModeTimeout,
       node_name_filter: nodeNameFilter,
+      enable_sub_info_nodes: enableSubInfoNodes,
+      sub_info_expire_prefix: subInfoExpirePrefix,
+      sub_info_traffic_prefix: subInfoTrafficPrefix,
       ...updates,
     })
   }
@@ -584,6 +569,57 @@ function SystemSettingsPage() {
                   />
                 </div>
               )}
+
+              {/* 订阅信息节点 */}
+              <div className='mt-4 space-y-3 rounded-lg border p-4'>
+                <div className='flex items-center justify-between'>
+                  <div className='flex items-center gap-2'>
+                    <Label htmlFor='enable-sub-info-nodes' className='cursor-pointer font-medium'>
+                      订阅信息节点
+                    </Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <CircleHelp className='h-4 w-4 text-muted-foreground cursor-help' />
+                      </TooltipTrigger>
+                      <TooltipContent side='top' className='max-w-xs'>
+                        <p>开启后，订阅输出时在节点列表顶部添加过期时间和剩余流量信息节点。</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <Switch
+                    id='enable-sub-info-nodes'
+                    checked={enableSubInfoNodes}
+                    onCheckedChange={(checked) => updateConfig({ enable_sub_info_nodes: checked })}
+                    disabled={loadingConfig || updateConfigMutation.isPending}
+                  />
+                </div>
+                {enableSubInfoNodes && (
+                  <div className='grid grid-cols-2 gap-3 pt-3 border-t'>
+                    <div className='space-y-2'>
+                      <Label htmlFor='sub-info-expire-prefix'>过期时间前缀</Label>
+                      <Input
+                        id='sub-info-expire-prefix'
+                        value={subInfoExpirePrefix}
+                        onChange={(e) => setSubInfoExpirePrefix(e.target.value)}
+                        onBlur={() => updateConfig({ sub_info_expire_prefix: subInfoExpirePrefix })}
+                        disabled={loadingConfig || updateConfigMutation.isPending}
+                        placeholder='📅过期时间'
+                      />
+                    </div>
+                    <div className='space-y-2'>
+                      <Label htmlFor='sub-info-traffic-prefix'>剩余流量前缀</Label>
+                      <Input
+                        id='sub-info-traffic-prefix'
+                        value={subInfoTrafficPrefix}
+                        onChange={(e) => setSubInfoTrafficPrefix(e.target.value)}
+                        onBlur={() => updateConfig({ sub_info_traffic_prefix: subInfoTrafficPrefix })}
+                        disabled={loadingConfig || updateConfigMutation.isPending}
+                        placeholder='⌛剩余流量'
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
 

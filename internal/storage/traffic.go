@@ -266,6 +266,9 @@ type SystemConfig struct {
 	ClientCompatibilityMode bool   // Auto-filter incompatible nodes for clients
 	SilentMode              bool   // Silent mode: return 404 for all requests except subscription
 	SilentModeTimeout       int    // Minutes to allow access after subscription fetch (default 15)
+	EnableSubInfoNodes      bool   // Enable subscription info nodes (expire time and remaining traffic)
+	SubInfoExpirePrefix     string // Prefix for expire time node, default "📅过期时间"
+	SubInfoTrafficPrefix    string // Prefix for remaining traffic node, default "⌛剩余流量"
 }
 
 // ExternalSubscription represents an external subscription URL imported by user.
@@ -862,6 +865,21 @@ WHERE NOT EXISTS (SELECT 1 FROM system_config WHERE id = 1);
 
 	// Add silent_mode_timeout column to system_config table (default 15 minutes)
 	if err := r.ensureSystemConfigColumn("silent_mode_timeout", "INTEGER NOT NULL DEFAULT 15"); err != nil {
+		return err
+	}
+
+	// Add enable_sub_info_nodes column to system_config table
+	if err := r.ensureSystemConfigColumn("enable_sub_info_nodes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
+	// Add sub_info_expire_prefix column to system_config table
+	if err := r.ensureSystemConfigColumn("sub_info_expire_prefix", "TEXT NOT NULL DEFAULT '📅过期时间'"); err != nil {
+		return err
+	}
+
+	// Add sub_info_traffic_prefix column to system_config table
+	if err := r.ensureSystemConfigColumn("sub_info_traffic_prefix", "TEXT NOT NULL DEFAULT '⌛剩余流量'"); err != nil {
 		return err
 	}
 
@@ -4328,18 +4346,26 @@ func (r *TrafficRepository) DeleteProxyProviderConfig(ctx context.Context, id in
 // Returns an empty SystemConfig if the row doesn't exist (should not happen after migration).
 func (r *TrafficRepository) GetSystemConfig(ctx context.Context) (SystemConfig, error) {
 	const query = `
-SELECT proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_mode_timeout
+SELECT proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_mode_timeout,
+       enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix
 FROM system_config
 WHERE id = 1
 `
 
 	var cfg SystemConfig
-	var compatibilityMode, silentMode, silentModeTimeout int
-	err := r.db.QueryRowContext(ctx, query).Scan(&cfg.ProxyGroupsSourceURL, &compatibilityMode, &silentMode, &silentModeTimeout)
+	var compatibilityMode, silentMode, silentModeTimeout, enableSubInfoNodes int
+	err := r.db.QueryRowContext(ctx, query).Scan(
+		&cfg.ProxyGroupsSourceURL, &compatibilityMode, &silentMode, &silentModeTimeout,
+		&enableSubInfoNodes, &cfg.SubInfoExpirePrefix, &cfg.SubInfoTrafficPrefix,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Return empty config if row doesn't exist (defensive)
-			return SystemConfig{SilentModeTimeout: 15}, nil
+			return SystemConfig{
+				SilentModeTimeout:    15,
+				SubInfoExpirePrefix:  "📅过期时间",
+				SubInfoTrafficPrefix: "⌛剩余流量",
+			}, nil
 		}
 		return SystemConfig{}, fmt.Errorf("query system config: %w", err)
 	}
@@ -4349,6 +4375,13 @@ WHERE id = 1
 	cfg.SilentModeTimeout = silentModeTimeout
 	if cfg.SilentModeTimeout <= 0 {
 		cfg.SilentModeTimeout = 15
+	}
+	cfg.EnableSubInfoNodes = enableSubInfoNodes != 0
+	if cfg.SubInfoExpirePrefix == "" {
+		cfg.SubInfoExpirePrefix = "📅过期时间"
+	}
+	if cfg.SubInfoTrafficPrefix == "" {
+		cfg.SubInfoTrafficPrefix = "⌛剩余流量"
 	}
 	return cfg, nil
 }
@@ -4362,6 +4395,9 @@ SET proxy_groups_source_url = ?,
     client_compatibility_mode = ?,
     silent_mode = ?,
     silent_mode_timeout = ?,
+    enable_sub_info_nodes = ?,
+    sub_info_expire_prefix = ?,
+    sub_info_traffic_prefix = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 1
 `
@@ -4378,8 +4414,23 @@ WHERE id = 1
 	if silentModeTimeout <= 0 {
 		silentModeTimeout = 15
 	}
+	enableSubInfoNodes := 0
+	if cfg.EnableSubInfoNodes {
+		enableSubInfoNodes = 1
+	}
+	subInfoExpirePrefix := cfg.SubInfoExpirePrefix
+	if subInfoExpirePrefix == "" {
+		subInfoExpirePrefix = "📅过期时间"
+	}
+	subInfoTrafficPrefix := cfg.SubInfoTrafficPrefix
+	if subInfoTrafficPrefix == "" {
+		subInfoTrafficPrefix = "⌛剩余流量"
+	}
 
-	result, err := r.db.ExecContext(ctx, updateStmt, cfg.ProxyGroupsSourceURL, compatibilityMode, silentMode, silentModeTimeout)
+	result, err := r.db.ExecContext(ctx, updateStmt,
+		cfg.ProxyGroupsSourceURL, compatibilityMode, silentMode, silentModeTimeout,
+		enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix,
+	)
 	if err != nil {
 		return fmt.Errorf("update system config: %w", err)
 	}
@@ -4392,10 +4443,14 @@ WHERE id = 1
 	// If no rows were updated, insert the singleton row (defensive fallback)
 	if rowsAffected == 0 {
 		const insertStmt = `
-INSERT INTO system_config (id, proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_mode_timeout)
-VALUES (1, ?, ?, ?, ?)
+INSERT INTO system_config (id, proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_mode_timeout,
+                           enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?)
 `
-		if _, err := r.db.ExecContext(ctx, insertStmt, cfg.ProxyGroupsSourceURL, compatibilityMode, silentMode, silentModeTimeout); err != nil {
+		if _, err := r.db.ExecContext(ctx, insertStmt,
+			cfg.ProxyGroupsSourceURL, compatibilityMode, silentMode, silentModeTimeout,
+			enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix,
+		); err != nil {
 			return fmt.Errorf("insert system config: %w", err)
 		}
 	}
