@@ -148,6 +148,7 @@ export function MobileEditNodesDialog({
   const [currentEditingGroup, setCurrentEditingGroup] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedTag, setSelectedTag] = useState<string>('all')
+  const [typePopoverGroup, setTypePopoverGroup] = useState<string | null>(null)
 
   // 配置传感器 - 支持触摸和指针
   const sensors = useSensors(
@@ -496,7 +497,7 @@ export function MobileEditNodesDialog({
                               <Edit2 className="h-3 w-3 mr-1" />
                               重命名
                             </Button>
-                            <Popover>
+                            <Popover open={typePopoverGroup === group.name} onOpenChange={(open) => setTypePopoverGroup(open ? group.name : null)}>
                               <PopoverTrigger asChild>
                                 <Button
                                   variant="outline"
@@ -516,7 +517,7 @@ export function MobileEditNodesDialog({
                                       variant={group.type === value ? 'default' : 'ghost'}
                                       size="sm"
                                       className="w-full justify-start"
-                                      onClick={() => handleGroupTypeChange(group.name, value)}
+                                      onClick={() => { handleGroupTypeChange(group.name, value); if (value !== 'load-balance') setTypePopoverGroup(null) }}
                                     >
                                       {label}
                                     </Button>
@@ -527,7 +528,7 @@ export function MobileEditNodesDialog({
                                       <p className="text-xs text-muted-foreground mb-1">策略</p>
                                       <Select
                                         value={group.strategy || 'round-robin'}
-                                        onValueChange={(value) => handleStrategyChange(group.name, value as ProxyGroup['strategy'])}
+                                        onValueChange={(value) => { handleStrategyChange(group.name, value as ProxyGroup['strategy']); setTypePopoverGroup(null) }}
                                       >
                                         <SelectTrigger className="h-8 text-xs">
                                           <SelectValue />
@@ -545,7 +546,7 @@ export function MobileEditNodesDialog({
                                     <p className="text-xs text-muted-foreground mb-1">中转代理组</p>
                                     <Select
                                       value={group.dialerProxyGroup || '__none__'}
-                                      onValueChange={(value) => handleDialerProxyGroupChange(group.name, value)}
+                                      onValueChange={(value) => { handleDialerProxyGroupChange(group.name, value); setTypePopoverGroup(null) }}
                                     >
                                       <SelectTrigger className="h-8 text-xs">
                                         <SelectValue placeholder="无" />

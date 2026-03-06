@@ -140,7 +140,7 @@ const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, allGroups, on
           <p className='text-xs text-muted-foreground mb-1'>策略</p>
           <Select
             value={group.strategy || 'round-robin'}
-            onValueChange={(value) => onChange({ ...group, strategy: value as ProxyGroup['strategy'] })}
+            onValueChange={(value) => { onChange({ ...group, strategy: value as ProxyGroup['strategy'] }); onClose?.() }}
           >
             <SelectTrigger className='h-8 text-xs'>
               <SelectValue />
@@ -166,6 +166,7 @@ const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, allGroups, on
               updated.dialerProxyGroup = value
             }
             onChange(updated)
+            onClose?.()
           }}
         >
           <SelectTrigger className='h-8 text-xs'>
