@@ -409,6 +409,27 @@ func (h *subscribeFilesHandler) handleUpdate(w http.ResponseWriter, r *http.Requ
 		existing.SelectedTags = req.SelectedTags
 		tagsChanged = true
 	}
+	// 更新自定义短链接码
+	if req.CustomShortCode != nil {
+		code := strings.TrimSpace(*req.CustomShortCode)
+		if code != "" {
+			for _, c := range code {
+				if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+					writeBadRequest(w, "自定义连接只能包含字母和数字")
+					return
+				}
+			}
+			// 同表唯一性：不能与其他订阅的 file_short_code 或 custom_short_code 冲突
+			fileCodes, err := h.repo.GetAllFileShortCodes(r.Context())
+			if err == nil {
+				if fn, exists := fileCodes[code]; exists && fn != existing.Filename {
+					writeBadRequest(w, "该自定义连接已被其他订阅使用")
+					return
+				}
+			}
+		}
+		existing.CustomShortCode = code
+	}
 	if req.ExpireAt != nil {
 		expireAt, parseErr := parseExpireAt(req.ExpireAt)
 		if parseErr != nil {
@@ -586,6 +607,7 @@ type subscribeFileRequest struct {
 	AutoSyncCustomRules *bool    `json:"auto_sync_custom_rules,omitempty"` // Pointer to distinguish between false and not provided
 	TemplateFilename    *string  `json:"template_filename,omitempty"`      // 绑定的 V3 模板文件名
 	SelectedTags        []string `json:"selected_tags,omitempty"`          // 选中的节点标签
+	CustomShortCode     *string  `json:"custom_short_code,omitempty"`      // 自定义短链接码
 	ExpireAt            *string  `json:"expire_at,omitempty"`
 }
 
@@ -599,6 +621,7 @@ type subscribeFileDTO struct {
 	AutoSyncCustomRules bool       `json:"auto_sync_custom_rules"`
 	TemplateFilename    string     `json:"template_filename"`
 	SelectedTags        []string   `json:"selected_tags"`
+	CustomShortCode     string     `json:"custom_short_code"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 	LatestVersion       int64      `json:"latest_version,omitempty"`
@@ -619,6 +642,7 @@ func convertSubscribeFile(file storage.SubscribeFile) subscribeFileDTO {
 		AutoSyncCustomRules: file.AutoSyncCustomRules,
 		TemplateFilename:    file.TemplateFilename,
 		SelectedTags:        selectedTags,
+		CustomShortCode:     file.CustomShortCode,
 		CreatedAt:           file.CreatedAt,
 		UpdatedAt:           file.UpdatedAt,
 	}

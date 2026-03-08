@@ -13,13 +13,14 @@ import (
 )
 
 type userEntry struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Nickname string `json:"nickname"`
-	Avatar   string `json:"avatar_url"`
-	Role     string `json:"role"`
-	IsActive bool   `json:"is_active"`
-	Remark   string `json:"remark"`
+	Username            string `json:"username"`
+	Email               string `json:"email"`
+	Nickname            string `json:"nickname"`
+	Avatar              string `json:"avatar_url"`
+	Role                string `json:"role"`
+	IsActive            bool   `json:"is_active"`
+	Remark              string `json:"remark"`
+	CustomUserShortCode string `json:"custom_user_short_code,omitempty"`
 }
 
 type userStatusRequest struct {
@@ -67,14 +68,16 @@ func NewUserListHandler(repo *storage.TrafficRepository) http.Handler {
 
 		entries := make([]userEntry, 0, len(users))
 		for _, user := range users {
+			customCode, _ := repo.GetUserCustomShortCode(r.Context(), user.Username)
 			entries = append(entries, userEntry{
-				Username: user.Username,
-				Email:    user.Email,
-				Nickname: user.Nickname,
-				Avatar:   user.AvatarURL,
-				Role:     user.Role,
-				IsActive: user.IsActive,
-				Remark:   user.Remark,
+				Username:            user.Username,
+				Email:               user.Email,
+				Nickname:            user.Nickname,
+				Avatar:              user.AvatarURL,
+				Role:                user.Role,
+				IsActive:            user.IsActive,
+				Remark:              user.Remark,
+				CustomUserShortCode: customCode,
 			})
 		}
 
@@ -376,6 +379,69 @@ func NewUserRemarkHandler(repo *storage.TrafficRepository) http.Handler {
 
 		if err := repo.UpdateUserRemark(r.Context(), username, payload.Remark); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	})
+}
+
+type userCustomShortCodeRequest struct {
+	Username        string `json:"username"`
+	CustomShortCode string `json:"custom_short_code"`
+}
+
+func NewUserCustomShortCodeHandler(repo *storage.TrafficRepository) http.Handler {
+	if repo == nil {
+		panic("user custom short code handler requires repository")
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, errors.New("only POST is supported"))
+			return
+		}
+
+		var payload userCustomShortCodeRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+
+		username := strings.TrimSpace(payload.Username)
+		if username == "" {
+			writeError(w, http.StatusBadRequest, errors.New("username is required"))
+			return
+		}
+
+		code := strings.TrimSpace(payload.CustomShortCode)
+
+		// Validate: alphanumeric only
+		for _, c := range code {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+				writeError(w, http.StatusBadRequest, errors.New("自定义连接只能包含字母和数字"))
+				return
+			}
+		}
+
+		// 同表唯一性：不能与其他用户的 user_short_code 或 custom_user_short_code 冲突
+		if code != "" {
+			userCodes, err := repo.GetAllUserShortCodes(r.Context())
+			if err == nil {
+				if un, exists := userCodes[code]; exists && un != username {
+					writeError(w, http.StatusConflict, errors.New("该自定义连接已被其他用户使用"))
+					return
+				}
+			}
+		}
+
+		if err := repo.UpdateUserCustomShortCode(r.Context(), username, code); err != nil {
+			if errors.Is(err, storage.ErrUserNotFound) {
+				writeError(w, http.StatusNotFound, errors.New("user not found"))
+				return
+			}
+			writeError(w, http.StatusConflict, errors.New(err.Error()))
 			return
 		}
 

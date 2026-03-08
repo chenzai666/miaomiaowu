@@ -19,95 +19,149 @@ dns:
   default-nameserver:
     - tls://1.12.12.12
   fake-ip-filter:
-    - '+.lan'
-    - '+.local'
-    - '+.example.com'
-proxies:
-  
+    - +.lan
+    - +.local
+    - +.example.com
+proxies: null
 proxy-groups:
   - name: 🚀 手动选择
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - ♻️ 自动选择
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: ♻️ 自动选择
     type: url-test
+    include-all: true
+    include-all-proxies: true
+    include-all-providers: true
+    proxies:
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
     url: https://cp.cloudflare.com/generate_204
     interval: 300
     tolerance: 50
-    include-all: true
-    proxies:
   - name: 🌠 中转节点
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     filter: 中转|CO|co
+    proxies:
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 🌄 落地节点
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     filter: LD|落地|Bage|bage|jinx|ctc|Jinx|JINX|CTC|Luodi|luodi|LUODI|zouter|legend|Alice|alice
+    proxies:
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
+    dialer-proxy-group: 🌠 中转节点
   - name: 🚀 GitHub
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🚀 手动选择
       - ♻️ 自动选择
       - 🎯 全球直连
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 📢 谷歌FCM
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🚀 手动选择
       - ♻️ 自动选择
       - 🎯 全球直连
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 🇬 谷歌服务
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🚀 手动选择
       - ♻️ 自动选择
       - 🎯 全球直连
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 🍎 苹果服务
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🎯 全球直连
       - 🚀 手动选择
       - ♻️ 自动选择
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: Ⓜ️ 微软服务
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🎯 全球直连
       - 🚀 手动选择
       - ♻️ 自动选择
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 🎮 游戏平台
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🎯 全球直连
       - 🚀 手动选择
       - ♻️ 自动选择
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 🎮 Steam
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🎯 全球直连
       - 🚀 手动选择
       - ♻️ 自动选择
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 🚀 测速工具
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🎯 全球直连
       - 🚀 手动选择
       - ♻️ 自动选择
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 🐟 漏网之鱼
     type: select
     include-all: true
+    include-all-proxies: true
+    include-all-providers: true
     proxies:
       - 🚀 手动选择
       - ♻️ 自动选择
       - 🎯 全球直连
+      - __PROXY_PROVIDERS__
+      - __PROXY_NODES__
   - name: 🔀 非标端口
     type: select
     proxies:

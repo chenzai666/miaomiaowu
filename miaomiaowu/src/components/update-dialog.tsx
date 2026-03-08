@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   RefreshCw,
@@ -10,6 +10,56 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+
+// 轻量 markdown 渲染：处理 GitHub release notes 常见格式
+function processInline(text: string): ReactNode[] {
+  const parts: ReactNode[] = []
+  const pattern = /(\*\*(.+?)\*\*)|(\[([^\]]+)\]\(([^)]+)\))|(`([^`]+)`)|(https?:\/\/[^\s)<]+)/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let key = 0
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index))
+    if (match[2]) {
+      parts.push(<strong key={key++}>{match[2]}</strong>)
+    } else if (match[4] && match[5]) {
+      parts.push(
+        <a key={key++} href={match[5]} target='_blank' rel='noopener noreferrer' className='text-primary hover:underline'>
+          {match[4]}
+        </a>
+      )
+    } else if (match[7]) {
+      parts.push(<code key={key++} className='bg-muted px-1 rounded text-xs'>{match[7]}</code>)
+    } else if (match[8]) {
+      parts.push(
+        <a key={key++} href={match[8]} target='_blank' rel='noopener noreferrer' className='text-primary hover:underline break-all'>
+          {match[8]}
+        </a>
+      )
+    }
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex))
+  return parts
+}
+
+function ReleaseNotes({ text }: { text: string }) {
+  return (
+    <div className='space-y-1.5 text-sm text-muted-foreground'>
+      {text.split('\n').map((line, i) => {
+        if (/^#{1,3} /.test(line)) {
+          return <h4 key={i} className='font-semibold text-foreground mt-2 first:mt-0'>{processInline(line.replace(/^#{1,3} /, ''))}</h4>
+        }
+        if (/^[*\-] /.test(line)) {
+          return <div key={i} className='flex gap-1.5 ml-1'><span className='shrink-0'>•</span><span className='min-w-0'>{processInline(line.replace(/^[*\-] /, ''))}</span></div>
+        }
+        if (!line.trim()) return <div key={i} className='h-1' />
+        return <p key={i}>{processInline(line)}</p>
+      })}
+    </div>
+  )
+}
 import {
   Dialog,
   DialogContent,
@@ -194,10 +244,8 @@ export function UpdateDialog({ open, onOpenChange }: UpdateDialogProps) {
               {updateInfo.release_notes && !isUpdating && (
                 <div className='space-y-2 overflow-hidden'>
                   <p className='text-sm font-medium'>更新内容：</p>
-                  <div className='bg-muted/30 rounded-lg p-3 max-h-40 overflow-y-auto overflow-x-hidden'>
-                    <p className='text-sm text-muted-foreground whitespace-pre-wrap break-all'>
-                      {updateInfo.release_notes}
-                    </p>
+                  <div className='bg-muted/30 rounded-lg p-3 max-h-48 overflow-y-auto overflow-x-hidden'>
+                    <ReleaseNotes text={updateInfo.release_notes} />
                   </div>
                 </div>
               )}

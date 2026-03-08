@@ -27,7 +27,7 @@ export function UserMenu() {
   const [open, setOpen] = useDialogState<boolean>()
   const [backupDialogOpen, setBackupDialogOpen] = useState(false)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
-  const [isDownloading, setIsDownloading] = useState(false)
+
   const { auth } = useAuthStore()
   const { currentVersion, hasUpdate, releaseUrl } = useVersionCheck()
   const queryClient = useQueryClient()
@@ -74,41 +74,15 @@ export function UserMenu() {
     },
   })
 
-  // 关闭Debug日志并下载
+  // 关闭Debug日志
   const disableDebugMutation = useMutation({
     mutationFn: async () => {
       const response = await api.post('/api/user/debug/disable')
-      return response.data as { message: string; download_url: string; log_path: string }
+      return response.data
     },
-    onSuccess: async (data) => {
+    onSuccess: () => {
       toast.success('Debug日志已关闭')
       queryClient.invalidateQueries({ queryKey: ['debug-status'] })
-
-      // 自动下载日志文件
-      if (data.download_url) {
-        setIsDownloading(true)
-        try {
-          const response = await api.get(data.download_url, {
-            responseType: 'blob',
-          })
-
-          const url = window.URL.createObjectURL(new Blob([response.data]))
-          const link = document.createElement('a')
-          link.href = url
-          link.setAttribute('download', data.download_url.split('file=')[1] || 'debug.log')
-          document.body.appendChild(link)
-          link.click()
-          link.remove()
-          window.URL.revokeObjectURL(url)
-
-          toast.success('日志文件已下载')
-        } catch (error) {
-          console.error('下载日志失败:', error)
-          toast.error('下载日志文件失败')
-        } finally {
-          setIsDownloading(false)
-        }
-      }
     },
     onError: (error) => {
       handleServerError(error)
@@ -184,22 +158,14 @@ export function UserMenu() {
           >
             <div className='flex items-center gap-2'>
               <Bug className='size-4' />
-              <div className='flex flex-col'>
-                <span className='text-sm'>Debug 日志</span>
-                {debugStatus?.enabled && debugStatus.file_size && (
-                  <span className='text-xs text-muted-foreground'>
-                    {debugStatus.file_size} · {debugStatus.duration}
-                  </span>
-                )}
-              </div>
+              <span className='text-sm'>Debug 日志</span>
             </div>
             <Switch
               checked={debugStatus?.enabled || false}
               onCheckedChange={handleDebugToggle}
               disabled={
                 enableDebugMutation.isPending ||
-                disableDebugMutation.isPending ||
-                isDownloading
+                disableDebugMutation.isPending
               }
               onClick={(e) => e.stopPropagation()}
             />

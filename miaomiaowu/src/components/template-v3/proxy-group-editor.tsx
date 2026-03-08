@@ -5,7 +5,8 @@ import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { ChevronDown, ChevronUp, Trash2, GripVertical } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ChevronDown, ChevronUp, Trash2, GripVertical, Link2 } from 'lucide-react'
 import { useState } from 'react'
 import { KeywordFilterInput } from './keyword-filter-input'
 import { ProxyTypeSelect } from './proxy-type-select'
@@ -54,6 +55,7 @@ export function ProxyGroupEditor({
   isRegionGroup = false,
 }: ProxyGroupEditorProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const [dialerPopoverOpen, setDialerPopoverOpen] = useState(false)
 
   const updateField = <K extends keyof ProxyGroupFormState>(
     field: K,
@@ -75,14 +77,46 @@ export function ProxyGroupEditor({
               <Badge variant="outline" className="text-xs">
                 {GROUP_TYPE_LABELS[group.type]}
               </Badge>
-              {group.includeAllProxies && (
-                <Badge variant="secondary" className="text-xs">全部节点</Badge>
-              )}
               {group.filterKeywords && (
                 <Badge variant="secondary" className="text-xs">有过滤</Badge>
               )}
+              {group.dialerProxyGroup && (
+                <Badge variant="secondary" className="text-xs">中转: {group.dialerProxyGroup}</Badge>
+              )}
             </div>
             <div className="flex items-center gap-1">
+              <Popover open={dialerPopoverOpen} onOpenChange={setDialerPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={`h-8 w-8 ${group.dialerProxyGroup ? 'text-primary' : 'text-muted-foreground'}`}
+                    title={group.dialerProxyGroup ? `中转: ${group.dialerProxyGroup}` : '设置中转代理组'}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Link2 className="h-4 w-4" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-56 p-3" align="end" onClick={(e) => e.stopPropagation()}>
+                  <div className="space-y-2">
+                    <Label className="text-xs">中转代理组</Label>
+                    <Select
+                      value={group.dialerProxyGroup || '__none__'}
+                      onValueChange={(v) => { updateField('dialerProxyGroup', v === '__none__' ? '' : v); setDialerPopoverOpen(false) }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="无" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">无</SelectItem>
+                        {allGroupNames.filter(n => n !== group.name).map(n => (
+                          <SelectItem key={n} value={n}>{n}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </PopoverContent>
+              </Popover>
               {onMoveUp && !isFirst && (
                 <Button
                   variant="ghost"

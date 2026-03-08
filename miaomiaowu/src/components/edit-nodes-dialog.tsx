@@ -46,6 +46,7 @@ interface ProxyGroup {
   url?: string
   interval?: number
   strategy?: 'round-robin' | 'consistent-hashing' | 'sticky-sessions'
+  dialerProxyGroup?: string
 }
 
 interface Node {
@@ -80,11 +81,12 @@ const DragStateContext = createContext<{ isActiveDragging: boolean }>({ isActive
 // 代理组类型选择器 - 提取到外部
 interface ProxyTypeSelectorProps {
   group: ProxyGroup
+  allGroups: ProxyGroup[]
   onChange: (updatedGroup: ProxyGroup) => void
   onClose?: () => void
 }
 
-const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, onChange, onClose }: ProxyTypeSelectorProps) {
+const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, allGroups, onChange, onClose }: ProxyTypeSelectorProps) {
   const types = [
     { value: 'select', label: '手动选择', hasUrl: false, hasStrategy: false },
     { value: 'url-test', label: '自动选择', hasUrl: true, hasStrategy: false },
@@ -138,7 +140,7 @@ const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, onChange, onC
           <p className='text-xs text-muted-foreground mb-1'>策略</p>
           <Select
             value={group.strategy || 'round-robin'}
-            onValueChange={(value) => onChange({ ...group, strategy: value as ProxyGroup['strategy'] })}
+            onValueChange={(value) => { onChange({ ...group, strategy: value as ProxyGroup['strategy'] }); onClose?.() }}
           >
             <SelectTrigger className='h-8 text-xs'>
               <SelectValue />
@@ -151,6 +153,35 @@ const ProxyTypeSelector = memo(function ProxyTypeSelector({ group, onChange, onC
           </Select>
         </div>
       )}
+
+      <div className='pt-2 border-t'>
+        <p className='text-xs text-muted-foreground mb-1'>中转代理组</p>
+        <Select
+          value={group.dialerProxyGroup || '__none__'}
+          onValueChange={(value) => {
+            const updated = { ...group }
+            if (value === '__none__') {
+              delete updated.dialerProxyGroup
+            } else {
+              updated.dialerProxyGroup = value
+            }
+            onChange(updated)
+            onClose?.()
+          }}
+        >
+          <SelectTrigger className='h-8 text-xs'>
+            <SelectValue placeholder='无' />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value='__none__'>无</SelectItem>
+            {allGroups.filter(g => g.name !== group.name).map(g => (
+              <SelectItem key={g.name} value={g.name}>
+                <Twemoji>{g.name}</Twemoji>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
     </div>
   )
 })
@@ -295,6 +326,7 @@ const DraggableGroupTitle = memo(function DraggableGroupTitle({
 // 可排序的代理组卡片 - 提取到外部
 interface SortableCardProps {
   group: ProxyGroup
+  allGroups: ProxyGroup[]
   isEditing: boolean
   editingValue: string
   onEditingValueChange: (value: string) => void
@@ -310,6 +342,7 @@ interface SortableCardProps {
 
 const SortableCard = memo(function SortableCard({
   group,
+  allGroups,
   isEditing,
   editingValue,
   onEditingValueChange,
@@ -417,6 +450,7 @@ const SortableCard = memo(function SortableCard({
                 <PopoverContent className='w-48 p-2' align='end'>
                   <ProxyTypeSelector
                     group={group}
+                    allGroups={allGroups}
                     onChange={(updatedGroup) => onGroupTypeChange(group.name, updatedGroup)}
                     onClose={() => setTypePopoverOpen(false)}
                   />
@@ -1586,6 +1620,7 @@ export function EditNodesDialog({
                       <SortableCard
                         key={group.name}
                         group={group}
+                        allGroups={proxyGroups}
                         isEditing={editingGroupName === group.name}
                         editingValue={editingGroupValue}
                         onEditingValueChange={setEditingGroupValue}

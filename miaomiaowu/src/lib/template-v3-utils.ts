@@ -64,6 +64,7 @@ export interface ProxyGroupV3Config {
   strategy?: string
   'interface-name'?: string
   'routing-mark'?: number
+  'dialer-proxy-group'?: string
 }
 
 // Parsed template structure
@@ -99,6 +100,7 @@ export interface ProxyGroupFormState {
   url: string
   interval: number
   tolerance: number
+  dialerProxyGroup: string
 }
 
 // Convert comma-separated keywords to regex pattern
@@ -136,6 +138,7 @@ export function createDefaultFormState(name = '新代理组'): ProxyGroupFormSta
     url: 'https://www.gstatic.com/generate_204',
     interval: 300,
     tolerance: 50,
+    dialerProxyGroup: '',
   }
 }
 
@@ -224,6 +227,10 @@ export function formStateToConfig(state: ProxyGroupFormState): ProxyGroupV3Confi
     if (state.tolerance && state.type !== 'load-balance') config.tolerance = state.tolerance
   }
 
+  if (state.dialerProxyGroup) {
+    config['dialer-proxy-group'] = state.dialerProxyGroup
+  }
+
   return config
 }
 
@@ -266,6 +273,7 @@ export function configToFormState(config: ProxyGroupV3Config, allGroupNames: str
     url: config.url || 'https://www.gstatic.com/generate_204',
     interval: config.interval || 300,
     tolerance: config.tolerance || 50,
+    dialerProxyGroup: config['dialer-proxy-group'] || '',
   }
 
   // Add default markers if not present but should be shown

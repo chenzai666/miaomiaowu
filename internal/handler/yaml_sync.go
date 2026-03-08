@@ -12,6 +12,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// proxyKeysChanged checks if the key set of the existing proxy node differs from the new config
+func proxyKeysChanged(proxyNode *yaml.Node, newConfig map[string]any) bool {
+	if proxyNode == nil || proxyNode.Kind != yaml.MappingNode {
+		return true
+	}
+	existingKeys := make(map[string]struct{})
+	for i := 0; i < len(proxyNode.Content); i += 2 {
+		if i+1 < len(proxyNode.Content) {
+			existingKeys[proxyNode.Content[i].Value] = struct{}{}
+		}
+	}
+	if len(existingKeys) != len(newConfig) {
+		return true
+	}
+	for key := range newConfig {
+		if _, ok := existingKeys[key]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
 // updateProxyNodeFields updates an existing proxy node with new field values while preserving original node styles
 func updateProxyNodeFields(proxyNode *yaml.Node, newConfig map[string]any) {
 	if proxyNode == nil || proxyNode.Kind != yaml.MappingNode {
@@ -498,7 +520,7 @@ func syncNodeToYAMLFiles(subscribeDir, oldNodeName, newNodeName string, clashCon
 
 								// If this proxy matches the one being updated
 								if proxyName == oldNodeName {
-									if nameChanged {
+									if nameChanged || proxyKeysChanged(proxyNode, newClashConfig) {
 										// Replace entire proxy node with new config
 										proxiesNode.Content[j] = util.ReorderProxyFieldsToNode(newClashConfig)
 									} else {
@@ -690,11 +712,11 @@ func batchSyncNodesToYAMLFiles(subscribeDir string, updates []NodeUpdate) error 
 								// 检查是否需要更新此节点
 								if update, exists := updateMap[proxyName]; exists {
 									nameChanged := update.oldName != update.newName
-									if nameChanged {
-										// 名称改变：替换整个节点
+									if nameChanged || proxyKeysChanged(proxyNode, update.clashConfig) {
+										// 名称改变或属性增删：替换整个节点
 										proxiesNode.Content[j] = util.ReorderProxyFieldsToNode(update.clashConfig)
 									} else {
-										// 名称不变：就地更新字段
+										// 仅值变化：就地更新字段
 										updateProxyNodeFields(proxyNode, update.clashConfig)
 										reorderProxyNodeFieldsInPlace(proxyNode)
 									}

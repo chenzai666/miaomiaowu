@@ -76,6 +76,7 @@ type SubscribeFile = {
   type: string
   filename: string
   file_short_code?: string
+  custom_short_code?: string
   expire_at?: string | null
   created_at: string
   updated_at: string
@@ -153,15 +154,15 @@ function SubscriptionPage() {
       ? `${window.location.protocol}//${window.location.host}`
       : 'http://localhost:8080')
 
-  const buildSubscriptionURL = (filename: string, fileShortCode: string | undefined, clientType?: string) => {
-    // If file short code and user short code are available, use composite short link (6 characters: 3 + 3)
-    if (fileShortCode && userShortCode) {
-      const compositeCode = fileShortCode + userShortCode
+  const buildSubscriptionURL = (filename: string, fileShortCode: string | undefined, customShortCode: string | undefined, clientType?: string) => {
+    // Use custom short code or file short code + user short code for composite short link
+    const fileCode = customShortCode || fileShortCode
+    if (fileCode && userShortCode) {
+      const compositeCode = fileCode + userShortCode
       const url = new URL(`/${compositeCode}`, baseURL)
       if (clientType) {
         url.searchParams.set('t', clientType)
       }
-      // No token parameter needed - authentication is embedded in the composite short link
       return url.toString()
     }
 
@@ -215,7 +216,7 @@ function SubscriptionPage() {
 
           {subscribeFiles.map((file) => {
             const Icon = ICON_MAP[file.name] ?? QrCode
-            const subscribeURL = buildSubscriptionURL(file.filename, file.file_short_code)
+            const subscribeURL = buildSubscriptionURL(file.filename, file.file_short_code, file.custom_short_code)
             // 使用当前显示的URL，如果没有则使用默认URL
             const displayURL = displayURLs[file.id] || subscribeURL
             const clashURL = `clash://install-config?url=${encodeURIComponent(subscribeURL)}`
@@ -290,7 +291,7 @@ function SubscriptionPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align='end' className='w-56'>
                           {CLIENT_TYPES.map((client) => {
-                            const clientURL = buildSubscriptionURL(file.filename, file.file_short_code, client.type)
+                            const clientURL = buildSubscriptionURL(file.filename, file.file_short_code, file.custom_short_code, client.type)
                             return (
                               <DropdownMenuItem
                                 key={client.type}

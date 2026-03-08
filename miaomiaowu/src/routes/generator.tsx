@@ -844,6 +844,7 @@ function SubscriptionGeneratorPage() {
     url?: string
     interval?: number
     lazy?: boolean
+    dialerProxyGroup?: string
   }
 
   // 计算可用节点（根据 showAllNodes 状态过滤）
@@ -1246,7 +1247,8 @@ function SubscriptionGeneratorPage() {
       // 获取所有代理组，确保每个组都有 proxies 数组
       const groups = (parsedConfig['proxy-groups'] as any[]).map(group => ({
         ...group,
-        proxies: group.proxies || []
+        proxies: group.proxies || [],
+        dialerProxyGroup: group['dialer-proxy-group'] || undefined,
       })) as ProxyGroup[]
 
       // 获取用户选中的节点，添加默认的特殊节点（使用排序后的节点列表）
@@ -1351,6 +1353,12 @@ function SubscriptionGeneratorPage() {
             delete groupConfig.use
           }
         }
+
+        // 保存中转代理组配置
+        if (group.dialerProxyGroup) {
+          groupConfig['dialer-proxy-group'] = group.dialerProxyGroup
+        }
+        delete groupConfig.dialerProxyGroup
 
         return groupConfig
       })
@@ -1470,35 +1478,27 @@ function SubscriptionGeneratorPage() {
         }
       }
 
-      // 处理链式代理：给落地节点组中的节点添加 dialer-proxy 参数
-      const landingGroup = proxyGroups.find(g => g.name === '🌄 落地节点')
-      const hasRelayGroup = proxyGroups.some(g => g.name === '🌠 中转节点')
-
-      if (landingGroup && hasRelayGroup && parsedConfig.proxies && Array.isArray(parsedConfig.proxies)) {
-        // 获取落地节点组中的所有节点名称
-        const landingNodeNames = new Set(landingGroup.proxies.filter((p): p is string => p !== undefined))
-
-        // 创建节点名称到协议的映射
+      // 处理链式代理：根据代理组的 dialerProxyGroup 配置添加 dialer-proxy
+      if (parsedConfig.proxies && Array.isArray(parsedConfig.proxies)) {
         const nodeProtocolMap = new Map<string, string>()
         savedNodes.forEach(node => {
           nodeProtocolMap.set(node.node_name, node.protocol)
         })
 
-        // 给这些节点添加 dialer-proxy 参数（跳过已经是链式代理的节点）
-        parsedConfig.proxies = parsedConfig.proxies.map((proxy: any) => {
-          if (landingNodeNames.has(proxy.name)) {
-            // 通过协议判断是否为链式代理节点（协议包含 ⇋）
-            const protocol = nodeProtocolMap.get(proxy.name)
-            if (protocol && protocol.includes('⇋')) {
-              return proxy
+        for (const group of proxyGroups) {
+          if (!group.dialerProxyGroup) continue
+          if (!proxyGroups.some(g => g.name === group.dialerProxyGroup)) continue
+
+          const nodeNames = new Set(group.proxies.filter((p): p is string => p !== undefined))
+          parsedConfig.proxies = parsedConfig.proxies.map((proxy: any) => {
+            if (nodeNames.has(proxy.name)) {
+              const protocol = nodeProtocolMap.get(proxy.name)
+              if (protocol && protocol.includes('⇋')) return proxy
+              return { ...proxy, 'dialer-proxy': group.dialerProxyGroup }
             }
-            return {
-              ...proxy,
-              'dialer-proxy': '🌠 中转节点'
-            }
-          }
-          return proxy
-        })
+            return proxy
+          })
+        }
       }
 
       // 重新排序 proxies 字段
@@ -1674,7 +1674,8 @@ function SubscriptionGeneratorPage() {
       newGroups.push({
         name: '🌄 落地节点',
         type: 'select',
-        proxies: Array.from(landingNodeNames)
+        proxies: Array.from(landingNodeNames),
+        dialerProxyGroup: '🌠 中转节点',
       })
     }
 
@@ -2688,7 +2689,7 @@ function SubscriptionGeneratorPage() {
                     </CardDescription>
                   </div>
                   <ButtonGroup mode='responsive' hideIconOnMobile>
-                    {!isV3Mode && (
+                    {(!isV3Mode || ruleMode === 'custom') && (
                       <>
                         <Button variant='outline' size='sm' onClick={handleAutoGroupByRegion}>
                           <MapPin className='h-4 w-4' />
@@ -2717,7 +2718,7 @@ function SubscriptionGeneratorPage() {
                   />
                 </div>
                 <div className='mt-4 flex justify-end gap-2'>
-                  {!isV3Mode && (
+                  {(!isV3Mode || ruleMode === 'custom') && (
                     <>
                       <Button variant='outline' onClick={handleAutoGroupByRegion}>
                         <MapPin className='mr-2 h-4 w-4' />

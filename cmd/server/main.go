@@ -134,6 +134,7 @@ func main() {
 	mux.Handle("/api/admin/users/status", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserStatusHandler(repo)))
 	mux.Handle("/api/admin/users/reset-password", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserResetPasswordHandler(repo)))
 	mux.Handle("/api/admin/users/remark", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserRemarkHandler(repo)))
+	mux.Handle("/api/admin/users/custom-short-code", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserCustomShortCodeHandler(repo)))
 	mux.Handle("/api/admin/users/", auth.RequireAdmin(tokenStore, userRepo, handler.NewUserSubscriptionsHandler(repo)))
 	mux.Handle("/api/admin/subscriptions", auth.RequireAdmin(tokenStore, userRepo, handler.NewSubscriptionAdminHandler(subscribeDir, repo)))
 	mux.Handle("/api/admin/subscriptions/", auth.RequireAdmin(tokenStore, userRepo, handler.NewSubscriptionAdminHandler(subscribeDir, repo)))
@@ -204,7 +205,7 @@ func main() {
 	tempSubAccessHandler := handler.NewTempSubscriptionAccessHandler()
 
 	// Combined handler for short links and web app
-	// This catches any 6-character paths like /AbC123 and routes them to short link handler
+	// 短链接默认为 3 + 3, 订阅code+用户code, 自定义最小为1+1, 不限制长度
 	// /t/{id} paths route to temporary subscription handler
 	// All other paths go to the web handler
 	shortLinkHandler := handler.NewShortLinkHandler(repo, subscriptionHandler)
@@ -215,10 +216,12 @@ func main() {
 			tempSubAccessHandler.ServeHTTP(w, r)
 			return
 		}
-		// Check if this looks like a short link (exactly 6 characters, alphanumeric)
-		if len(path) == 6 && isAlphanumeric(path) {
-			shortLinkHandler.ServeHTTP(w, r)
-			return
+		// 自定义短链接后, 订阅+用户最小为2个字符
+		// TryServe does DB lookup; returns false if no match, allowing fallthrough to web
+		if len(path) >= 2 && isAlphanumeric(path) {
+			if shortLinkHandler.TryServe(w, r) {
+				return
+			}
 		}
 		// Otherwise, pass to web handler
 		web.Handler().ServeHTTP(w, r)

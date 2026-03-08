@@ -800,6 +800,7 @@ proxy-groups:
     type: select
     include-all-proxies: true
     filter: LD|落地
+    dialer-proxy-group: 🌠 中转节点
 `
 
 	// Provide both relay and landing proxies

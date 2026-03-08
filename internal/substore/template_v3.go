@@ -187,6 +187,9 @@ func (p *TemplateV3Processor) ProcessTemplate(templateContent string, proxies []
 				// Collect all proxy group names (including newly added region groups)
 				p.collectProxyGroupNames(valueNode)
 
+				// Collect dialer-proxy-group field mapping before processing (removeMihomoFields will strip them)
+				dpGroupMap := p.collectDialerProxyGroupMap(valueNode)
+
 				// Process each proxy group
 				if err := p.processProxyGroups(valueNode); err != nil {
 					return "", err
@@ -195,11 +198,11 @@ func (p *TemplateV3Processor) ProcessTemplate(templateContent string, proxies []
 				// Collect used proxy names from processed proxy-groups
 				usedProxyNames = p.collectUsedProxyNames(valueNode)
 
-				// Collect proxies that belong to specific groups (for dialer-proxy)
-				landingNodeProxies := p.collectProxiesByGroupName(valueNode, "🌄 落地节点")
+				// Build dialer proxy configs using processed proxy-groups (proxies now expanded)
+				dpConfigs := p.buildDialerProxyConfigs(valueNode, dpGroupMap)
 
 				// Add or update top-level proxies with used proxy configs
-				p.updateTopLevelProxies(rootMap, proxies, usedProxyNames, landingNodeProxies)
+				p.updateTopLevelProxies(rootMap, proxies, usedProxyNames, dpConfigs)
 			}
 
 			// Remove add-region-proxy-groups from output
@@ -737,6 +740,7 @@ func (p *TemplateV3Processor) removeMihomoFields(groupNode *yaml.Node) {
 		"filter":                      true,
 		"exclude-filter":              true,
 		"exclude-type":                true,
+		"dialer-proxy-group":          true,
 	}
 
 	newContent := make([]*yaml.Node, 0, len(groupNode.Content))
@@ -1003,8 +1007,84 @@ func (p *TemplateV3Processor) collectProxiesByGroupName(groupsNode *yaml.Node, t
 	return result
 }
 
+// dialerProxyConfig maps a set of proxy names to their dialer-proxy group
+type dialerProxyConfig struct {
+	proxyNames  map[string]bool
+	dialerProxy string
+}
+
+// collectDialerProxyGroupMap reads dialer-proxy-group field from proxy groups before processing
+// Returns a map of group name -> dialer-proxy group name
+func (p *TemplateV3Processor) collectDialerProxyGroupMap(groupsNode *yaml.Node) map[string]string {
+	result := make(map[string]string)
+	for _, groupNode := range groupsNode.Content {
+		if groupNode.Kind != yaml.MappingNode {
+			continue
+		}
+		var name, dialerGroup string
+		for i := 0; i < len(groupNode.Content); i += 2 {
+			switch groupNode.Content[i].Value {
+			case "name":
+				name = groupNode.Content[i+1].Value
+			case "dialer-proxy-group":
+				dialerGroup = groupNode.Content[i+1].Value
+			}
+		}
+		if name != "" && dialerGroup != "" {
+			result[name] = dialerGroup
+		}
+	}
+	return result
+}
+
+// buildDialerProxyConfigs builds dialer proxy configs using the group map and processed proxy-groups
+func (p *TemplateV3Processor) buildDialerProxyConfigs(groupsNode *yaml.Node, groupMap map[string]string) []dialerProxyConfig {
+	proxyGroupNames := make(map[string]bool)
+	for _, name := range p.proxyGroups {
+		proxyGroupNames[name] = true
+	}
+	for _, name := range p.regionGroupNames {
+		proxyGroupNames[name] = true
+	}
+
+	var configs []dialerProxyConfig
+	for _, groupNode := range groupsNode.Content {
+		if groupNode.Kind != yaml.MappingNode {
+			continue
+		}
+
+		var groupName string
+		var proxiesNode *yaml.Node
+		for i := 0; i < len(groupNode.Content); i += 2 {
+			switch groupNode.Content[i].Value {
+			case "name":
+				groupName = groupNode.Content[i+1].Value
+			case "proxies":
+				proxiesNode = groupNode.Content[i+1]
+			}
+		}
+
+		dialerGroup, ok := groupMap[groupName]
+		if !ok || !proxyGroupNames[dialerGroup] || proxiesNode == nil || proxiesNode.Kind != yaml.SequenceNode {
+			continue
+		}
+
+		names := make(map[string]bool)
+		for _, n := range proxiesNode.Content {
+			v := n.Value
+			if !proxyGroupNames[v] && v != "DIRECT" && v != "REJECT" && v != "PASS" {
+				names[v] = true
+			}
+		}
+		if len(names) > 0 {
+			configs = append(configs, dialerProxyConfig{proxyNames: names, dialerProxy: dialerGroup})
+		}
+	}
+	return configs
+}
+
 // updateTopLevelProxies adds or updates the top-level proxies list with used proxy configs
-func (p *TemplateV3Processor) updateTopLevelProxies(rootMap *yaml.Node, proxies []map[string]any, usedProxyNames map[string]bool, landingNodeProxies map[string]bool) {
+func (p *TemplateV3Processor) updateTopLevelProxies(rootMap *yaml.Node, proxies []map[string]any, usedProxyNames map[string]bool, dpConfigs []dialerProxyConfig) {
 	if len(usedProxyNames) == 0 {
 		return
 	}
@@ -1018,15 +1098,16 @@ func (p *TemplateV3Processor) updateTopLevelProxies(rootMap *yaml.Node, proxies 
 	}
 
 	// Create ordered list of proxies (maintain order from p.allProxies)
-	// Add dialer-proxy to landing node proxies
+	// Add dialer-proxy based on dialer-proxy-group configurations
 	var orderedProxies []map[string]any
 	for _, proxyNode := range p.allProxies {
 		if usedProxyNames[proxyNode.Name] {
 			if config, exists := proxyConfigMap[proxyNode.Name]; exists {
-				// If this proxy belongs to landing nodes group, add dialer-proxy
-				// Modify the original map so that injectProxiesIntoTemplate will also have the change
-				if landingNodeProxies[proxyNode.Name] {
-					config["dialer-proxy"] = "🌠 中转节点"
+				for _, dpc := range dpConfigs {
+					if dpc.proxyNames[proxyNode.Name] {
+						config["dialer-proxy"] = dpc.dialerProxy
+						break
+					}
 				}
 				orderedProxies = append(orderedProxies, config)
 			}

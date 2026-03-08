@@ -419,7 +419,7 @@ function parseShadowsocks(url: string): ProxyNode | null {
       // 从最后一个冒号分割服务器地址，支持IPv6
       const lastColonIndex = serverPart.lastIndexOf(':')
       if (lastColonIndex === -1) return null
-      server = serverPart.substring(0, lastColonIndex)
+      server = serverPart.substring(0, lastColonIndex).replace(/^\[|]$/g, '')
       port = parseInt(serverPart.substring(lastColonIndex + 1)) || 0
 
       // 尝试解析认证部分
@@ -485,7 +485,7 @@ function parseShadowsocks(url: string): ProxyNode | null {
       // 从最后一个冒号分割，支持IPv6地址
       const lastColonIndex = serverPart.lastIndexOf(':')
       if (lastColonIndex === -1) return null
-      server = serverPart.substring(0, lastColonIndex)
+      server = serverPart.substring(0, lastColonIndex).replace(/^\[|]$/g, '')
       port = parseInt(serverPart.substring(lastColonIndex + 1)) || 0
     }
 

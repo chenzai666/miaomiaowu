@@ -4,6 +4,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { Toaster } from '@/components/ui/sonner'
 import { NavigationProgress } from '@/components/navigation-progress'
+import { DebugFloatingViewer } from '@/components/debug-floating-viewer'
 import { useEffect, useState } from 'react'
 
 function RootComponent() {
@@ -24,6 +25,7 @@ function RootComponent() {
     <>
       <NavigationProgress />
       <Outlet />
+      <DebugFloatingViewer />
       <Toaster
         duration={5000}
         visibleToasts={5}

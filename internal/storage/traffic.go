@@ -229,6 +229,7 @@ type SubscribeFile struct {
 	Type                string
 	Filename            string
 	FileShortCode       string     // 3-character code for file identification in composite short links
+	CustomShortCode     string     // User-defined short code (replaces FileShortCode when set)
 	AutoSyncCustomRules bool       // Whether to automatically sync custom rules to this file
 	TemplateFilename    string     // 绑定的 V3 模板文件名，为空表示未绑定模板
 	SelectedTags        []string   // 选中的节点标签，为空表示使用所有节点
@@ -445,6 +446,14 @@ CREATE TABLE IF NOT EXISTS user_tokens (
 	// Generate user short codes for existing users that don't have one
 	if err := r.generateMissingUserShortCodes(); err != nil {
 		return fmt.Errorf("generate missing user short codes: %w", err)
+	}
+
+	// Add custom_user_short_code column to user_tokens table
+	if err := r.ensureUserTokenColumn("custom_user_short_code", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := r.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_tokens_custom_user_short_code ON user_tokens(custom_user_short_code) WHERE custom_user_short_code != '';`); err != nil {
+		return fmt.Errorf("create custom_user_short_code index: %w", err)
 	}
 
 	const sessionSchema = `
@@ -828,6 +837,14 @@ CREATE INDEX IF NOT EXISTS idx_external_subscriptions_url ON external_subscripti
 	// Generate file short codes for existing subscribe_files that don't have one
 	if err := r.generateMissingFileShortCodes(); err != nil {
 		return fmt.Errorf("generate missing file short codes: %w", err)
+	}
+
+	// Add custom_short_code column to subscribe_files table
+	if err := r.ensureSubscribeFileColumn("custom_short_code", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := r.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribe_files_custom_short_code ON subscribe_files(custom_short_code) WHERE custom_short_code != '';`); err != nil {
+		return fmt.Errorf("create subscribe_files custom_short_code index: %w", err)
 	}
 
 	// Create system_config table for global settings
@@ -2281,6 +2298,25 @@ func (r *TrafficRepository) GetFilenameByFileShortCode(ctx context.Context, file
 	return filename, nil
 }
 
+// GetFilenameByCustomShortCode returns the subscription filename associated with a custom short code.
+func (r *TrafficRepository) GetFilenameByCustomShortCode(ctx context.Context, code string) (filename string, err error) {
+	if r == nil || r.db == nil {
+		return "", errors.New("traffic repository not initialized")
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return "", ErrSubscribeFileNotFound
+	}
+	const stmt = `SELECT filename FROM subscribe_files WHERE custom_short_code = ? LIMIT 1;`
+	if err := r.db.QueryRowContext(ctx, stmt, code).Scan(&filename); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrSubscribeFileNotFound
+		}
+		return "", fmt.Errorf("query subscribe file by custom short code: %w", err)
+	}
+	return filename, nil
+}
+
 // GetUsernameByUserShortCode returns the username associated with a user short code.
 func (r *TrafficRepository) GetUsernameByUserShortCode(ctx context.Context, userShortCode string) (username string, err error) {
 	if r == nil || r.db == nil {
@@ -2323,6 +2359,133 @@ func (r *TrafficRepository) GetUserShortCode(ctx context.Context, username strin
 	}
 
 	return userShortCode, nil
+}
+
+// GetEffectiveUserShortCode returns custom_user_short_code if set, otherwise user_short_code.
+func (r *TrafficRepository) GetEffectiveUserShortCode(ctx context.Context, username string) (string, error) {
+	if r == nil || r.db == nil {
+		return "", errors.New("traffic repository not initialized")
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "", errors.New("username is required")
+	}
+	var userCode, customCode string
+	const stmt = `SELECT COALESCE(user_short_code, ''), COALESCE(custom_user_short_code, '') FROM user_tokens WHERE username = ? LIMIT 1;`
+	if err := r.db.QueryRowContext(ctx, stmt, username).Scan(&userCode, &customCode); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", errors.New("user short code not found")
+		}
+		return "", fmt.Errorf("query effective user short code: %w", err)
+	}
+	if customCode != "" {
+		return customCode, nil
+	}
+	return userCode, nil
+}
+
+// GetAllFileShortCodes returns a map of all file codes → filename.
+// Custom short codes take priority; random file_short_code is also included.
+func (r *TrafficRepository) GetAllFileShortCodes(ctx context.Context) (map[string]string, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("traffic repository not initialized")
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), filename FROM subscribe_files`)
+	if err != nil {
+		return nil, fmt.Errorf("query all file short codes: %w", err)
+	}
+	defer rows.Close()
+
+	codes := make(map[string]string)
+	for rows.Next() {
+		var fileCode, customCode, filename string
+		if err := rows.Scan(&fileCode, &customCode, &filename); err != nil {
+			return nil, fmt.Errorf("scan file short code: %w", err)
+		}
+		if customCode != "" {
+			codes[customCode] = filename
+		}
+		if fileCode != "" {
+			codes[fileCode] = filename
+		}
+	}
+	return codes, rows.Err()
+}
+
+// GetAllUserShortCodes returns a map of all user codes → username.
+// Custom user short codes take priority; random user_short_code is also included.
+func (r *TrafficRepository) GetAllUserShortCodes(ctx context.Context) (map[string]string, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("traffic repository not initialized")
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT COALESCE(user_short_code, ''), COALESCE(custom_user_short_code, ''), username FROM user_tokens`)
+	if err != nil {
+		return nil, fmt.Errorf("query all user short codes: %w", err)
+	}
+	defer rows.Close()
+
+	codes := make(map[string]string)
+	for rows.Next() {
+		var userCode, customCode, username string
+		if err := rows.Scan(&userCode, &customCode, &username); err != nil {
+			return nil, fmt.Errorf("scan user short code: %w", err)
+		}
+		if customCode != "" {
+			codes[customCode] = username
+		}
+		if userCode != "" {
+			codes[userCode] = username
+		}
+	}
+	return codes, rows.Err()
+}
+
+// UpdateUserCustomShortCode sets a custom user short code for the given username.
+func (r *TrafficRepository) UpdateUserCustomShortCode(ctx context.Context, username, code string) error {
+	if r == nil || r.db == nil {
+		return errors.New("traffic repository not initialized")
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("username is required")
+	}
+	code = strings.TrimSpace(code)
+
+	res, err := r.db.ExecContext(ctx, `UPDATE user_tokens SET custom_user_short_code = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?`, code, username)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return errors.New("该自定义连接已被使用")
+		}
+		return fmt.Errorf("update user custom short code: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if affected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// GetUserCustomShortCode returns the custom_user_short_code for a given username.
+func (r *TrafficRepository) GetUserCustomShortCode(ctx context.Context, username string) (string, error) {
+	if r == nil || r.db == nil {
+		return "", errors.New("traffic repository not initialized")
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "", errors.New("username is required")
+	}
+	var code string
+	const stmt = `SELECT COALESCE(custom_user_short_code, '') FROM user_tokens WHERE username = ? LIMIT 1;`
+	if err := r.db.QueryRowContext(ctx, stmt, username).Scan(&code); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("query user custom short code: %w", err)
+	}
+	return code, nil
 }
 
 // SaveRuleVersion persists a new rule version for the provided filename and returns the new version number.
@@ -3145,7 +3308,7 @@ func (r *TrafficRepository) GetUserSubscriptions(ctx context.Context, username s
 	}
 
 	const stmt = `
-		SELECT s.id, s.name, COALESCE(s.description, ''), COALESCE(s.url, ''), s.type, s.filename, COALESCE(s.file_short_code, ''), COALESCE(s.auto_sync_custom_rules, 0), COALESCE(s.template_filename, ''), s.expire_at, s.created_at, s.updated_at
+		SELECT s.id, s.name, COALESCE(s.description, ''), COALESCE(s.url, ''), s.type, s.filename, COALESCE(s.file_short_code, ''), COALESCE(s.custom_short_code, ''), COALESCE(s.auto_sync_custom_rules, 0), COALESCE(s.template_filename, ''), s.expire_at, s.created_at, s.updated_at
 		FROM subscribe_files s
 		INNER JOIN user_subscriptions us ON s.id = us.subscription_id
 		WHERE us.username = ?
@@ -3162,7 +3325,7 @@ func (r *TrafficRepository) GetUserSubscriptions(ctx context.Context, username s
 		var sub SubscribeFile
 		var autoSync int
 		var expireAt sql.NullTime
-		if err := rows.Scan(&sub.ID, &sub.Name, &sub.Description, &sub.URL, &sub.Type, &sub.Filename, &sub.FileShortCode, &autoSync, &sub.TemplateFilename, &expireAt, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+		if err := rows.Scan(&sub.ID, &sub.Name, &sub.Description, &sub.URL, &sub.Type, &sub.Filename, &sub.FileShortCode, &sub.CustomShortCode, &autoSync, &sub.TemplateFilename, &expireAt, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan subscription: %w", err)
 		}
 		sub.AutoSyncCustomRules = autoSync != 0

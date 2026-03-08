@@ -56,6 +56,7 @@ proxy-groups:
     proxies:
       - __PROXY_PROVIDERS__
       - __PROXY_NODES__
+    dialer-proxy-group: 🌠 中转节点
   - name: 🚀 GitHub
     type: select
     include-all: true

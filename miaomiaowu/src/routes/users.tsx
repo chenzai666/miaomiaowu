@@ -32,6 +32,8 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { profileQueryFn } from '@/lib/profile'
 import { useAuthStore } from '@/stores/auth-store'
 import { Pencil } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 // @ts-ignore - retained simple route definition
 export const Route = createFileRoute('/users')({
@@ -51,6 +53,7 @@ type UserRow = {
   role: string
   is_active: boolean
   remark: string
+  custom_user_short_code?: string
 }
 
 type ResetState = {
@@ -105,6 +108,8 @@ function UsersPage() {
   })
   const [subscriptionManageState, setSubscriptionManageState] = useState<SubscriptionManageState | null>(null)
   const [remarkEditState, setRemarkEditState] = useState<{ username: string; remark: string } | null>(null)
+  const [customCodeEditUser, setCustomCodeEditUser] = useState<string | null>(null)
+  const [customCodeInput, setCustomCodeInput] = useState('')
 
   const { data: profile, isLoading: profileLoading, isError: profileError } = useQuery({
     queryKey: ['profile'],
@@ -255,6 +260,20 @@ function UsersPage() {
     onError: handleServerError,
   })
 
+  const customCodeMutation = useMutation({
+    mutationFn: async (payload: { username: string; custom_short_code: string }) => {
+      await api.post('/api/admin/users/custom-short-code', payload)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      queryClient.invalidateQueries({ queryKey: ['user-subscriptions'] })
+      toast.success('自定义连接已更新')
+      setCustomCodeEditUser(null)
+      setCustomCodeInput('')
+    },
+    onError: handleServerError,
+  })
+
   const toggleSubscriptionSelection = (id: number, nextState?: boolean) => {
     setSubscriptionManageState((prev) => {
       if (!prev) return prev
@@ -393,6 +412,73 @@ function UsersPage() {
                     </div>
                   ),
                   width: '200px'
+                },
+                {
+                  header: '自定义连接',
+                  cell: (user) => {
+                    const code = user.custom_user_short_code || ''
+                    return (
+                      <Popover
+                        open={customCodeEditUser === user.username}
+                        onOpenChange={(open) => {
+                          if (open) {
+                            setCustomCodeEditUser(user.username)
+                            setCustomCodeInput(code)
+                          } else {
+                            setCustomCodeEditUser(null)
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button variant='ghost' size='sm' className='h-7 px-2 font-mono text-xs'>
+                            {code ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span>{code.length > 6 ? code.slice(0, 6) + '…' : code}</span>
+                                </TooltipTrigger>
+                                {code.length > 6 && <TooltipContent>{code}</TooltipContent>}
+                              </Tooltip>
+                            ) : (
+                              <span className='text-muted-foreground'>设置</span>
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className='w-64 p-3' align='start'>
+                          <div className='space-y-2'>
+                            <Label className='text-xs'>自定义用户连接</Label>
+                            <Input
+                              value={customCodeInput}
+                              onChange={(e) => setCustomCodeInput(e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
+                              placeholder='仅字母数字，留空清除'
+                              className='h-8 text-xs font-mono'
+                            />
+                            <div className='flex gap-2'>
+                              <Button
+                                size='sm'
+                                className='h-7 flex-1 text-xs'
+                                disabled={customCodeMutation.isPending}
+                                onClick={() => customCodeMutation.mutate({ username: user.username, custom_short_code: customCodeInput })}
+                              >
+                                保存
+                              </Button>
+                              {code && (
+                                <Button
+                                  size='sm'
+                                  variant='outline'
+                                  className='h-7 text-xs'
+                                  disabled={customCodeMutation.isPending}
+                                  onClick={() => customCodeMutation.mutate({ username: user.username, custom_short_code: '' })}
+                                >
+                                  清除
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )
+                  },
+                  width: '140px'
                 },
                 {
                   header: '角色',

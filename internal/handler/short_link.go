@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,7 +16,7 @@ type shortLinkHandler struct {
 }
 
 // NewShortLinkHandler creates a handler for short link redirection.
-func NewShortLinkHandler(repo *storage.TrafficRepository, subscriptionHandler *SubscriptionHandler) http.Handler {
+func NewShortLinkHandler(repo *storage.TrafficRepository, subscriptionHandler *SubscriptionHandler) *shortLinkHandler {
 	if repo == nil {
 		panic("short link handler requires repository")
 	}
@@ -31,116 +30,71 @@ func NewShortLinkHandler(repo *storage.TrafficRepository, subscriptionHandler *S
 	}
 }
 
-func (h *shortLinkHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// TryServe attempts to serve the request as a short link.
+// Returns true if the request was handled, false if not matched (caller should fall through).
+func (h *shortLinkHandler) TryServe(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet {
-		http.NotFound(w, r)
-		return
+		return false
 	}
 
-	// Extract composite shortcode from URL path (6 characters: 3 for file + 3 for user)
 	compositeCode := strings.Trim(r.URL.Path, "/")
-	if compositeCode == "" || len(compositeCode) != 6 {
-		http.NotFound(w, r)
-		return
+	if len(compositeCode) < 2 {
+		return false
 	}
 
-	// Split into file short code (first 3 chars) and user short code (last 3 chars)
-	fileShortCode := compositeCode[:3]
-	userShortCode := compositeCode[3:]
+	ctx := r.Context()
 
-	// Get subscription filename by file short code
-	filename, err := h.repo.GetFilenameByFileShortCode(r.Context(), fileShortCode)
-	if err != nil {
-		if errors.Is(err, storage.ErrSubscribeFileNotFound) {
-			writeError(w, http.StatusNotFound, errors.New("not found"))
-			return
+	fileCodes, err := h.repo.GetAllFileShortCodes(ctx)
+	if err != nil || len(fileCodes) == 0 {
+		return false
+	}
+	userCodes, err := h.repo.GetAllUserShortCodes(ctx)
+	if err != nil || len(userCodes) == 0 {
+		return false
+	}
+
+	// 因为自定义短链接没有分隔符, 此处使用模糊匹配
+	// TODO: 如果用户体验不佳改为缓存加hash匹配
+	var filename, username string
+	matched := false
+	for i := len(compositeCode) - 1; i >= 1; i-- {
+		fileCode := compositeCode[:i]
+		userCode := compositeCode[i:]
+		fn, fOk := fileCodes[fileCode]
+		un, uOk := userCodes[userCode]
+		if fOk && uOk {
+			filename = fn
+			username = un
+			matched = true
+			break
 		}
-		writeError(w, http.StatusInternalServerError, err)
-		return
 	}
 
-	// Get username by user short code
-	username, err := h.repo.GetUsernameByUserShortCode(r.Context(), userShortCode)
-	if err != nil {
-		// 用户不存在，设置token失效标记并继续处理
-		ctx := context.WithValue(r.Context(), TokenInvalidKey, true)
-
-		// 构建新请求，不设置username
-		newURL := *r.URL
-		q := newURL.Query()
-		// 保留filename参数以维持URL结构
-		q.Set("filename", filename)
-		// 保留't'参数用于客户端类型转换
-		if clientType := r.URL.Query().Get("t"); clientType != "" {
-			q.Set("t", clientType)
-		}
-		newURL.RawQuery = q.Encode()
-
-		newRequest := r.Clone(ctx)
-		newRequest.URL = &newURL
-
-		// 直接调用subscription handler，它会检测到token_invalid标记
-		h.subscriptionHandler.ServeHTTP(w, newRequest)
-		return
+	if !matched {
+		return false
 	}
 
-	// TODO: User-Agent validation temporarily disabled
-	// Validate User-Agent
-	// userAgent := r.Header.Get("User-Agent")
-	// clientType := r.URL.Query().Get("t")
-
-	// if clientType == "" {
-	// 	// Default request (no t parameter): must contain "clash"
-	// 	if !isClashUA(userAgent) {
-	// 		http.NotFound(w, r)
-	// 		return
-	// 	}
-	// } else {
-	// 	// With t parameter: must be mobile user-agent
-	// 	if !isMobileUA(userAgent) {
-	// 		http.NotFound(w, r)
-	// 		return
-	// 	}
-	// }
-
-	// Create a new request with authenticated context and filename parameter
-	// This allows us to directly invoke the subscription handler without redirecting
-	ctx := auth.ContextWithUsername(r.Context(), username)
-
-	// Build new URL with filename parameter
+	// 使用真实文件与用户token转发订阅请求
 	newURL := *r.URL
 	q := newURL.Query()
 	q.Set("filename", filename)
-	// Preserve the 't' parameter if present (for client type conversion)
 	if clientType := r.URL.Query().Get("t"); clientType != "" {
 		q.Set("t", clientType)
 	}
 	newURL.RawQuery = q.Encode()
 
-	// Create new request with updated context and URL
-	newRequest := r.Clone(ctx)
+	newCtx := auth.ContextWithUsername(ctx, username)
+	newRequest := r.Clone(newCtx)
 	newRequest.URL = &newURL
-
-	// Directly serve the subscription content using the subscription handler
 	h.subscriptionHandler.ServeHTTP(w, newRequest)
+	return true
 }
 
-// isClashUA checks if the user-agent contains "clash"
-func isClashUA(ua string) bool {
-	lower := strings.ToLower(ua)
-	return strings.Contains(lower, "clash")
-}
-
-// isMobileUA checks if the user-agent is from a mobile device
-func isMobileUA(ua string) bool {
-	lower := strings.ToLower(ua)
-	mobileKeywords := []string{"iphone", "ipad", "android", "mobile"}
-	for _, keyword := range mobileKeywords {
-		if strings.Contains(lower, keyword) {
-			return true
-		}
+// ServeHTTP implements http.Handler for backward compatibility.
+func (h *shortLinkHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !h.TryServe(w, r) {
+		http.NotFound(w, r)
 	}
-	return false
 }
 
 // NewShortLinkResetHandler creates a handler for resetting short links.

@@ -98,6 +98,85 @@ export function findRegionGroupName(countryCode: string): string | null {
 }
 
 /**
+ * 去除节点名称开头的旗帜 emoji（含后续空格）
+ */
+export function stripFlagEmoji(name: string): string {
+  return name.replace(/^[\u{1F1E6}-\u{1F1FF}]{2}\s*/u, '')
+}
+
+/**
+ * 常用国旗选项列表
+ */
+export const FLAG_OPTIONS: { code: string; label: string }[] = [
+  // 东亚
+  { code: 'CN', label: '中国' },
+  { code: 'HK', label: '香港' },
+  { code: 'MO', label: '澳门' },
+  { code: 'TW', label: '台湾' },
+  { code: 'JP', label: '日本' },
+  { code: 'KR', label: '韩国' },
+  { code: 'KP', label: '朝鲜' },
+  { code: 'MN', label: '蒙古' },
+  // 东南亚
+  { code: 'SG', label: '新加坡' },
+  { code: 'TH', label: '泰国' },
+  { code: 'VN', label: '越南' },
+  { code: 'PH', label: '菲律宾' },
+  { code: 'MY', label: '马来西亚' },
+  { code: 'ID', label: '印尼' },
+  { code: 'MM', label: '缅甸' },
+  { code: 'KH', label: '柬埔寨' },
+  // 南亚 / 中亚 / 西亚
+  { code: 'IN', label: '印度' },
+  { code: 'PK', label: '巴基斯坦' },
+  { code: 'BD', label: '孟加拉' },
+  { code: 'KZ', label: '哈萨克斯坦' },
+  { code: 'TR', label: '土耳其' },
+  { code: 'AE', label: '阿联酋' },
+  { code: 'SA', label: '沙特' },
+  { code: 'IL', label: '以色列' },
+  // 北美
+  { code: 'US', label: '美国' },
+  { code: 'CA', label: '加拿大' },
+  { code: 'MX', label: '墨西哥' },
+  // 南美
+  { code: 'BR', label: '巴西' },
+  { code: 'AR', label: '阿根廷' },
+  { code: 'CL', label: '智利' },
+  { code: 'CO', label: '哥伦比亚' },
+  // 欧洲
+  { code: 'GB', label: '英国' },
+  { code: 'DE', label: '德国' },
+  { code: 'FR', label: '法国' },
+  { code: 'NL', label: '荷兰' },
+  { code: 'IT', label: '意大利' },
+  { code: 'ES', label: '西班牙' },
+  { code: 'RU', label: '俄罗斯' },
+  { code: 'UA', label: '乌克兰' },
+  { code: 'PL', label: '波兰' },
+  { code: 'SE', label: '瑞典' },
+  { code: 'NO', label: '挪威' },
+  { code: 'FI', label: '芬兰' },
+  { code: 'CH', label: '瑞士' },
+  { code: 'AT', label: '奥地利' },
+  { code: 'IE', label: '爱尔兰' },
+  { code: 'PT', label: '葡萄牙' },
+  { code: 'CZ', label: '捷克' },
+  { code: 'RO', label: '罗马尼亚' },
+  { code: 'HU', label: '匈牙利' },
+  { code: 'LU', label: '卢森堡' },
+  { code: 'IS', label: '冰岛' },
+  // 大洋洲
+  { code: 'AU', label: '澳大利亚' },
+  { code: 'NZ', label: '新西兰' },
+  // 非洲
+  { code: 'ZA', label: '南非' },
+  { code: 'EG', label: '埃及' },
+  { code: 'NG', label: '尼日利亚' },
+  { code: 'KE', label: '肯尼亚' },
+]
+
+/**
  * 检查字符串开头是否已有 emoji
  * 包括旗帜 emoji、表情符号等
  */

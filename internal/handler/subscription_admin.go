@@ -416,23 +416,23 @@ func NewSubscriptionListHandler(repo *storage.TrafficRepository) http.Handler {
 		// Get user short code only if short link is enabled
 		var userShortCode string
 		if enableShortLink {
-			userShortCode, err = repo.GetUserShortCode(r.Context(), username)
+			userShortCode, err = repo.GetEffectiveUserShortCode(r.Context(), username)
 			if err != nil {
-				// If user short code doesn't exist, it will be generated on next token access
 				userShortCode = ""
 			}
 		}
 
 		type item struct {
-			ID            int64      `json:"id"`
-			Name          string     `json:"name"`
-			Description   string     `json:"description"`
-			Filename      string     `json:"filename"`
-			Type          string     `json:"type"`
-			FileShortCode string     `json:"file_short_code,omitempty"`
-			ExpireAt      *time.Time `json:"expire_at,omitempty"`
-			UpdatedAt     time.Time  `json:"updated_at"`
-			LatestVersion int64      `json:"latest_version,omitempty"`
+			ID              int64      `json:"id"`
+			Name            string     `json:"name"`
+			Description     string     `json:"description"`
+			Filename        string     `json:"filename"`
+			Type            string     `json:"type"`
+			FileShortCode   string     `json:"file_short_code,omitempty"`
+			CustomShortCode string     `json:"custom_short_code,omitempty"`
+			ExpireAt        *time.Time `json:"expire_at,omitempty"`
+			UpdatedAt       time.Time  `json:"updated_at"`
+			LatestVersion   int64      `json:"latest_version,omitempty"`
 		}
 
 		payload := make([]item, 0, len(files))
@@ -445,20 +445,23 @@ func NewSubscriptionListHandler(repo *storage.TrafficRepository) http.Handler {
 
 			// Only include file short code if short link is enabled
 			fileShortCode := ""
+			customShortCode := ""
 			if enableShortLink {
 				fileShortCode = file.FileShortCode
+				customShortCode = file.CustomShortCode
 			}
 
 			payload = append(payload, item{
-				ID:            file.ID,
-				Name:          file.Name,
-				Description:   file.Description,
-				Filename:      file.Filename,
-				Type:          file.Type,
-				FileShortCode: fileShortCode,
-				ExpireAt:      file.ExpireAt,
-				UpdatedAt:     file.UpdatedAt,
-				LatestVersion: latestVersion,
+				ID:              file.ID,
+				Name:            file.Name,
+				Description:     file.Description,
+				Filename:        file.Filename,
+				Type:            file.Type,
+				FileShortCode:   fileShortCode,
+				CustomShortCode: customShortCode,
+				ExpireAt:        file.ExpireAt,
+				UpdatedAt:       file.UpdatedAt,
+				LatestVersion:   latestVersion,
 			})
 		}
 

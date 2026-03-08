@@ -30,8 +30,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import IpIcon from '@/assets/icons/ip.svg'
 import ExchangeIcon from '@/assets/icons/exchange.svg'
 import URI_Producer from '@/lib/substore/producers/uri'
-import { countryCodeToFlag, hasRegionEmoji, getGeoIPInfo } from '@/lib/country-flag'
+import { countryCodeToFlag, hasRegionEmoji, getGeoIPInfo, stripFlagEmoji } from '@/lib/country-flag'
 import { Twemoji } from '@/components/twemoji'
+import { FlagEmojiPicker } from '@/components/flag-emoji-picker'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import {
   DndContext,
@@ -1432,12 +1433,6 @@ function NodesPage() {
     const node = savedNodes.find(n => n.id === nodeId)
     if (!node) return
 
-    // 检查节点名称是否已有 emoji 前缀
-    if (hasRegionEmoji(node.node_name)) {
-      toast.info('该节点已有 emoji 前缀')
-      return
-    }
-
     setAddingEmojiForNode(nodeId)
 
     try {
@@ -1488,8 +1483,9 @@ function NodesPage() {
         return
       }
 
-      // 更新节点名称
-      const newName = `${flag} ${node.node_name}`
+      // 更新节点名称（先去除已有国旗 emoji）
+      const baseName = stripFlagEmoji(node.node_name)
+      const newName = `${flag} ${baseName}`
       const updatedParsedConfig = updateConfigName(node.parsed_config, newName)
       const updatedClashConfig = updateConfigName(node.clash_config, newName)
 
@@ -1508,6 +1504,38 @@ function NodesPage() {
     } catch (error) {
       console.error('Failed to add emoji:', error)
       toast.error('添加 emoji 失败')
+    } finally {
+      setAddingEmojiForNode(null)
+    }
+  }, [savedNodes, queryClient])
+
+  // 手动选择国旗 emoji
+  const handleSetNodeFlag = useCallback(async (nodeId: number, flag: string) => {
+    const node = savedNodes.find(n => n.id === nodeId)
+    if (!node) return
+
+    setAddingEmojiForNode(nodeId)
+    try {
+      const baseName = stripFlagEmoji(node.node_name)
+      const newName = `${flag} ${baseName}`
+      const updatedParsedConfig = updateConfigName(node.parsed_config, newName)
+      const updatedClashConfig = updateConfigName(node.clash_config, newName)
+
+      await api.put(`/api/admin/nodes/${nodeId}`, {
+        raw_url: node.raw_url,
+        node_name: newName,
+        protocol: node.protocol,
+        parsed_config: updatedParsedConfig,
+        clash_config: updatedClashConfig,
+        enabled: node.enabled,
+        tag: node.tag,
+      })
+
+      queryClient.invalidateQueries({ queryKey: ['nodes'] })
+      toast.success('已设置国旗 emoji')
+    } catch (error) {
+      console.error('Failed to set flag emoji:', error)
+      toast.error('设置国旗 emoji 失败')
     } finally {
       setAddingEmojiForNode(null)
     }
@@ -3178,21 +3206,13 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                     )
                                   })()
                                 )}
-                                {node.isSaved && node.dbNode && !hasRegionEmoji(node.name) && (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        variant='ghost'
-                                        size='icon'
-                                        className='size-7 text-[#d97757] hover:text-[#c66647]'
-                                        onClick={() => handleAddSingleNodeEmoji(node.dbNode!.id)}
-                                        disabled={addingEmojiForNode === node.dbNode!.id}
-                                      >
-                                        <Flag className={`size-4 ${addingEmojiForNode === node.dbNode!.id ? 'animate-pulse' : ''}`} />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>添加地区 emoji</TooltipContent>
-                                  </Tooltip>
+                                {node.isSaved && node.dbNode && (
+                                  <FlagEmojiPicker
+                                    onSelect={(flag) => handleSetNodeFlag(node.dbNode!.id, flag)}
+                                    onAutoDetect={() => handleAddSingleNodeEmoji(node.dbNode!.id)}
+                                    disabled={addingEmojiForNode === node.dbNode!.id}
+                                    loading={addingEmojiForNode === node.dbNode!.id}
+                                  />
                                 )}
                                 {node.isSaved && node.dbId && (
                                   <Tooltip>
@@ -3995,21 +4015,14 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       />
                                     </Button>
                                   )}
-                                  {node.isSaved && node.dbNode && !hasRegionEmoji(node.name) && (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          variant='ghost'
-                                          size='icon'
-                                          className='size-7 text-[#d97757] hover:text-[#c66647] shrink-0'
-                                          onClick={() => handleAddSingleNodeEmoji(node.dbNode!.id)}
-                                          disabled={addingEmojiForNode === node.dbNode!.id}
-                                        >
-                                          <Flag className={`size-4 ${addingEmojiForNode === node.dbNode!.id ? 'animate-pulse' : ''}`} />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>添加地区 emoji</TooltipContent>
-                                    </Tooltip>
+                                  {node.isSaved && node.dbNode && (
+                                    <FlagEmojiPicker
+                                      onSelect={(flag) => handleSetNodeFlag(node.dbNode!.id, flag)}
+                                      onAutoDetect={() => handleAddSingleNodeEmoji(node.dbNode!.id)}
+                                      disabled={addingEmojiForNode === node.dbNode!.id}
+                                      loading={addingEmojiForNode === node.dbNode!.id}
+                                      className='size-7 text-[#d97757] hover:text-[#c66647] shrink-0'
+                                    />
                                   )}
                                 </div>
                               )}
@@ -4202,12 +4215,14 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           <img src={ExchangeIcon} alt='交换' className='size-4 [filter:invert(63%)_sepia(45%)_saturate(1068%)_hue-rotate(327deg)_brightness(95%)_contrast(88%)]' />
                                         </Button>
                                       )}
-                                      {node.isSaved && node.dbNode && !hasRegionEmoji(node.name) && (
-                                        <Tooltip><TooltipTrigger asChild>
-                                          <Button variant='ghost' size='icon' className='size-7 text-[#d97757] shrink-0' onClick={() => handleAddSingleNodeEmoji(node.dbNode!.id)} disabled={addingEmojiForNode === node.dbNode!.id}>
-                                            <Flag className={`size-4 ${addingEmojiForNode === node.dbNode!.id ? 'animate-pulse' : ''}`} />
-                                          </Button>
-                                        </TooltipTrigger><TooltipContent>添加地区 emoji</TooltipContent></Tooltip>
+                                      {node.isSaved && node.dbNode && (
+                                        <FlagEmojiPicker
+                                          onSelect={(flag) => handleSetNodeFlag(node.dbNode!.id, flag)}
+                                          onAutoDetect={() => handleAddSingleNodeEmoji(node.dbNode!.id)}
+                                          disabled={addingEmojiForNode === node.dbNode!.id}
+                                          loading={addingEmojiForNode === node.dbNode!.id}
+                                          className='size-7 text-[#d97757] shrink-0'
+                                        />
                                       )}
                                     </div>
                                     {node.parsed && (
@@ -4469,21 +4484,14 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       />
                                     </Button>
                                   )}
-                                  {node.isSaved && node.dbNode && !hasRegionEmoji(node.name) && (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          variant='ghost'
-                                          size='icon'
-                                          className='size-7 text-[#d97757] hover:text-[#c66647] shrink-0'
-                                          onClick={() => handleAddSingleNodeEmoji(node.dbNode!.id)}
-                                          disabled={addingEmojiForNode === node.dbNode!.id}
-                                        >
-                                          <Flag className={`size-4 ${addingEmojiForNode === node.dbNode!.id ? 'animate-pulse' : ''}`} />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>添加地区 emoji</TooltipContent>
-                                    </Tooltip>
+                                  {node.isSaved && node.dbNode && (
+                                    <FlagEmojiPicker
+                                      onSelect={(flag) => handleSetNodeFlag(node.dbNode!.id, flag)}
+                                      onAutoDetect={() => handleAddSingleNodeEmoji(node.dbNode!.id)}
+                                      disabled={addingEmojiForNode === node.dbNode!.id}
+                                      loading={addingEmojiForNode === node.dbNode!.id}
+                                      className='size-7 text-[#d97757] hover:text-[#c66647] shrink-0'
+                                    />
                                   )}
                                 </div>
                               )}
@@ -5005,24 +5013,15 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           />
                                         </Button>
                                       )}
-                                      {node.isSaved && node.dbNode && !hasRegionEmoji(node.name) && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <Button
-                                              variant='ghost'
-                                              size='icon'
-                                              className='size-7 text-[#d97757] hover:text-[#c66647] shrink-0'
-                                              onClick={(e) => {
-                                                e.stopPropagation()
-                                                handleAddSingleNodeEmoji(node.dbNode!.id)
-                                              }}
-                                              disabled={addingEmojiForNode === node.dbNode!.id}
-                                            >
-                                              <Flag className={`size-4 ${addingEmojiForNode === node.dbNode!.id ? 'animate-pulse' : ''}`} />
-                                            </Button>
-                                          </TooltipTrigger>
-                                          <TooltipContent>添加地区 emoji</TooltipContent>
-                                        </Tooltip>
+                                      {node.isSaved && node.dbNode && (
+                                        <FlagEmojiPicker
+                                          onSelect={(flag) => handleSetNodeFlag(node.dbNode!.id, flag)}
+                                          onAutoDetect={() => handleAddSingleNodeEmoji(node.dbNode!.id)}
+                                          disabled={addingEmojiForNode === node.dbNode!.id}
+                                          loading={addingEmojiForNode === node.dbNode!.id}
+                                          className='size-7 text-[#d97757] hover:text-[#c66647] shrink-0'
+                                          stopPropagation
+                                        />
                                       )}
                                     </div>
                                   </div>

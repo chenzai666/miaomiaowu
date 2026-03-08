@@ -46,6 +46,7 @@ interface ProxyGroup {
   interval?: number
   strategy?: 'round-robin' | 'consistent-hashing' | 'sticky-sessions'
   use?: string[]
+  dialerProxyGroup?: string
 }
 
 interface Node {
@@ -147,6 +148,7 @@ export function MobileEditNodesDialog({
   const [currentEditingGroup, setCurrentEditingGroup] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedTag, setSelectedTag] = useState<string>('all')
+  const [typePopoverGroup, setTypePopoverGroup] = useState<string | null>(null)
 
   // 配置传感器 - 支持触摸和指针
   const sensors = useSensors(
@@ -391,6 +393,21 @@ export function MobileEditNodesDialog({
     onProxyGroupsChange(newGroups)
   }
 
+  // 处理中转代理组变更
+  const handleDialerProxyGroupChange = (groupName: string, value: string) => {
+    const newGroups = proxyGroups.map(g => {
+      if (g.name !== groupName) return g
+      const updated = { ...g }
+      if (value === '__none__') {
+        delete updated.dialerProxyGroup
+      } else {
+        updated.dialerProxyGroup = value
+      }
+      return updated
+    })
+    onProxyGroupsChange(newGroups)
+  }
+
   // 获取类型显示名称
   const getTypeLabel = (type: string) => {
     return proxyTypes.find(t => t.value === type)?.label || type
@@ -480,7 +497,7 @@ export function MobileEditNodesDialog({
                               <Edit2 className="h-3 w-3 mr-1" />
                               重命名
                             </Button>
-                            <Popover>
+                            <Popover open={typePopoverGroup === group.name} onOpenChange={(open) => setTypePopoverGroup(open ? group.name : null)}>
                               <PopoverTrigger asChild>
                                 <Button
                                   variant="outline"
@@ -500,7 +517,7 @@ export function MobileEditNodesDialog({
                                       variant={group.type === value ? 'default' : 'ghost'}
                                       size="sm"
                                       className="w-full justify-start"
-                                      onClick={() => handleGroupTypeChange(group.name, value)}
+                                      onClick={() => { handleGroupTypeChange(group.name, value); if (value !== 'load-balance') setTypePopoverGroup(null) }}
                                     >
                                       {label}
                                     </Button>
@@ -511,7 +528,7 @@ export function MobileEditNodesDialog({
                                       <p className="text-xs text-muted-foreground mb-1">策略</p>
                                       <Select
                                         value={group.strategy || 'round-robin'}
-                                        onValueChange={(value) => handleStrategyChange(group.name, value as ProxyGroup['strategy'])}
+                                        onValueChange={(value) => { handleStrategyChange(group.name, value as ProxyGroup['strategy']); setTypePopoverGroup(null) }}
                                       >
                                         <SelectTrigger className="h-8 text-xs">
                                           <SelectValue />
@@ -524,6 +541,26 @@ export function MobileEditNodesDialog({
                                       </Select>
                                     </div>
                                   )}
+
+                                  <div className="pt-2 border-t">
+                                    <p className="text-xs text-muted-foreground mb-1">中转代理组</p>
+                                    <Select
+                                      value={group.dialerProxyGroup || '__none__'}
+                                      onValueChange={(value) => { handleDialerProxyGroupChange(group.name, value); setTypePopoverGroup(null) }}
+                                    >
+                                      <SelectTrigger className="h-8 text-xs">
+                                        <SelectValue placeholder="无" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__none__">无</SelectItem>
+                                        {proxyGroups.filter(g => g.name !== group.name).map(g => (
+                                          <SelectItem key={g.name} value={g.name}>
+                                            <Twemoji>{g.name}</Twemoji>
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
                                 </div>
                               </PopoverContent>
                             </Popover>
