@@ -1485,6 +1485,15 @@ function SubscriptionGeneratorPage() {
           nodeProtocolMap.set(node.node_name, node.protocol)
         })
 
+        // 先清除所有非链式节点的旧 dialer-proxy，防止残留
+        parsedConfig.proxies.forEach((proxy: any) => {
+          const protocol = nodeProtocolMap.get(proxy.name)
+          if (!protocol || !protocol.includes('⇋')) {
+            delete proxy['dialer-proxy']
+          }
+        })
+
+        // 根据当前代理组配置重新设置 dialer-proxy
         for (const group of proxyGroups) {
           if (!group.dialerProxyGroup) continue
           if (!proxyGroups.some(g => g.name === group.dialerProxyGroup)) continue

@@ -740,7 +740,6 @@ func (p *TemplateV3Processor) removeMihomoFields(groupNode *yaml.Node) {
 		"filter":                      true,
 		"exclude-filter":              true,
 		"exclude-type":                true,
-		"dialer-proxy-group":          true,
 	}
 
 	newContent := make([]*yaml.Node, 0, len(groupNode.Content))

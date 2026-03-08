@@ -307,6 +307,7 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	// 模板生成逻辑：如果订阅绑定了 V3 模板，使用模板生成配置
 	var data []byte
+	fromTemplate := false
 	if hasSubscribeFile && subscribeFile.TemplateFilename != "" {
 		stepStart = time.Now()
 		templateData, err := h.generateFromTemplate(r.Context(), username, subscribeFile)
@@ -315,6 +316,7 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			// 回退到直接读取文件
 		} else {
 			data = templateData
+			fromTemplate = true
 			logger.Info("[⏱️ 耗时监测] 模板生成完成", "step", "template_generate", "duration_ms", time.Since(stepStart).Milliseconds(), "bytes", len(data))
 		}
 	}
@@ -335,11 +337,9 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		logger.Info("[⏱️ 耗时监测] 文件读取完成", "step", "file_read", "duration_ms", time.Since(stepStart).Milliseconds(), "bytes", len(data))
 	}
 
-	// MMW 同步
+	// MMW 同步（模板模式下跳过，模板处理已包含代理集合节点）
 	stepStart = time.Now()
-	// 同步 MMW 模式代理集合的节点到订阅文件
-	// 这样可以确保获取订阅时包含最新的代理集合节点
-	if h.repo != nil {
+	if h.repo != nil && !fromTemplate {
 		SyncMMWProxyProvidersToFile(h.repo, h.baseDir, cleanedName)
 		// 重新读取更新后的文件
 		updatedData, err := os.ReadFile(resolvedPath)
@@ -714,12 +714,13 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 					}
 				}
 
-				// 重新排序 proxy-groups 中每个代理组的字段
+				// 重新排序 proxy-groups 中每个代理组的字段，并剥离 dialer-proxy-group（MMW 自定义字段，不输出到订阅响应）
 				for i := 0; i < len(rootMap.Content); i += 2 {
 					if rootMap.Content[i].Value == "proxy-groups" {
 						proxyGroupsNode := rootMap.Content[i+1]
 						if proxyGroupsNode.Kind == yaml.SequenceNode {
 							reorderProxyGroups(proxyGroupsNode)
+							stripDialerProxyGroup(proxyGroupsNode)
 						}
 						break
 					}
@@ -1639,6 +1640,26 @@ func reorderProxyGroupFields(groupNode *yaml.Node) {
 
 	// Replace the original content
 	groupNode.Content = newContent
+}
+
+// stripDialerProxyGroup 从 proxy-groups 中移除 dialer-proxy-group 字段（仅用于 API 输出）
+func stripDialerProxyGroup(proxyGroupsNode *yaml.Node) {
+	for _, groupNode := range proxyGroupsNode.Content {
+		if groupNode.Kind != yaml.MappingNode {
+			continue
+		}
+		newContent := make([]*yaml.Node, 0, len(groupNode.Content))
+		for i := 0; i < len(groupNode.Content); i += 2 {
+			if i+1 >= len(groupNode.Content) {
+				break
+			}
+			if groupNode.Content[i].Value == "dialer-proxy-group" {
+				continue
+			}
+			newContent = append(newContent, groupNode.Content[i], groupNode.Content[i+1])
+		}
+		groupNode.Content = newContent
+	}
 }
 
 // sortProxiesByNodeOrder 根据用户配置的节点顺序对 proxies 进行排序
