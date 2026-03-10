@@ -429,6 +429,9 @@ func (h *subscribeFilesHandler) handleUpdate(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		existing.CustomShortCode = code
+		if m := GetSilentModeManager(); m != nil {
+			m.InvalidateShortLinkCache()
+		}
 	}
 	if req.ExpireAt != nil {
 		expireAt, parseErr := parseExpireAt(req.ExpireAt)

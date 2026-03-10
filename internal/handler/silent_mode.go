@@ -21,6 +21,9 @@ type SilentModeManager struct {
 	lastGlobalActiveTime time.Time  // 全局活跃时间，任何用户获取订阅后更新
 	globalActiveMu       sync.Mutex // 保护 lastGlobalActiveTime
 	startTime            time.Time  // 服务启动时间，用于启动后临时恢复
+	shortLinkSet         map[string]struct{}
+	shortLinkSetMu       sync.RWMutex
+	shortLinkSetTime     time.Time
 }
 
 func NewSilentModeManager(repo *storage.TrafficRepository, tokens *auth.TokenStore) *SilentModeManager {
@@ -38,6 +41,56 @@ func NewSilentModeManager(repo *storage.TrafficRepository, tokens *auth.TokenSto
 
 func GetSilentModeManager() *SilentModeManager {
 	return globalSilentModeManager
+}
+
+// InvalidateShortLinkCache 使短链接缓存失效，下次请求时重新加载
+func (m *SilentModeManager) InvalidateShortLinkCache() {
+	m.shortLinkSetMu.Lock()
+	m.shortLinkSetTime = time.Time{}
+	m.shortLinkSetMu.Unlock()
+}
+
+func (m *SilentModeManager) refreshShortLinkSet() {
+	ctx := context.Background()
+	fileCodes, err := m.repo.GetAllFileShortCodes(ctx)
+	if err != nil {
+		return
+	}
+	userCodes, err := m.repo.GetAllUserShortCodes(ctx)
+	if err != nil {
+		return
+	}
+
+	set := make(map[string]struct{}, len(fileCodes)*len(userCodes))
+	for fc := range fileCodes {
+		for uc := range userCodes {
+			set[fc+uc] = struct{}{}
+		}
+	}
+
+	m.shortLinkSetMu.Lock()
+	m.shortLinkSet = set
+	m.shortLinkSetTime = time.Now()
+	m.shortLinkSetMu.Unlock()
+}
+
+func (m *SilentModeManager) isKnownShortLink(path string) bool {
+	if len(path) < 2 || !isAlphanumericPath(path) {
+		return false
+	}
+
+	m.shortLinkSetMu.RLock()
+	expired := time.Since(m.shortLinkSetTime) > 60*time.Second
+	m.shortLinkSetMu.RUnlock()
+
+	if expired {
+		m.refreshShortLinkSet()
+	}
+
+	m.shortLinkSetMu.RLock()
+	_, ok := m.shortLinkSet[path]
+	m.shortLinkSetMu.RUnlock()
+	return ok
 }
 
 func (m *SilentModeManager) RecordSubscriptionAccess(username string) {
@@ -121,8 +174,7 @@ func (m *SilentModeManager) extractUsername(r *http.Request) string {
 	return ""
 }
 
-// 触发
-func isAllowedPath(path string) bool {
+func (m *SilentModeManager) isAllowedPath(path string) bool {
 	// 订阅相关接口始终可访问
 	allowedPrefixes := []string{
 		"/api/clash/subscribe",
@@ -136,9 +188,9 @@ func isAllowedPath(path string) bool {
 		}
 	}
 
-	// 短链接处理 (6位字母数字字符，如 /AbC123)
+	// 短链接：精确匹配已知的短链接组合
 	trimmedPath := strings.Trim(path, "/")
-	if len(trimmedPath) == 6 && isAlphanumericPath(trimmedPath) {
+	if m.isKnownShortLink(trimmedPath) {
 		return true
 	}
 
@@ -174,7 +226,7 @@ func (m *SilentModeManager) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if isAllowedPath(r.URL.Path) {
+		if m.isAllowedPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

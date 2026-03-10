@@ -445,6 +445,10 @@ func NewUserCustomShortCodeHandler(repo *storage.TrafficRepository) http.Handler
 			return
 		}
 
+		if m := GetSilentModeManager(); m != nil {
+			m.InvalidateShortLinkCache()
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 	})

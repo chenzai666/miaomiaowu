@@ -135,6 +135,10 @@ func (h *shortLinkResetHandler) handleReset(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if m := GetSilentModeManager(); m != nil {
+		m.InvalidateShortLinkCache()
+	}
+
 	// Return success
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -190,6 +194,10 @@ func NewUserCustomShortCodeSelfHandler(repo *storage.TrafficRepository) http.Han
 			if err := repo.UpdateUserCustomShortCode(r.Context(), username, code); err != nil {
 				writeError(w, http.StatusConflict, errors.New(err.Error()))
 				return
+			}
+
+			if m := GetSilentModeManager(); m != nil {
+				m.InvalidateShortLinkCache()
 			}
 
 			w.Header().Set("Content-Type", "application/json")
