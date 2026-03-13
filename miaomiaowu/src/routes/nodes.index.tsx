@@ -5405,27 +5405,25 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
           setExchangeFilterText('') // 关闭对话框时清空筛选
         }
       }}>
-        <DialogContent className='max-w-2xl max-h-[80vh] overflow-y-auto'>
+        <DialogContent className='max-w-2xl flex flex-col max-h-[80vh]'>
           <DialogHeader>
             <DialogTitle>选择中转节点</DialogTitle>
             <DialogDescription>
               选择目标节点与 "{sourceNodeForExchange?.node_name}" 创建链式代理
             </DialogDescription>
           </DialogHeader>
-          <div className='space-y-4 py-4'>
-            {/* 筛选输入框 */}
-            <div className='space-y-2'>
-              <Input
-                placeholder='搜索节点名称、协议或标签...'
-                value={exchangeFilterText}
-                onChange={(e) => setExchangeFilterText(e.target.value)}
-                className='text-sm'
-              />
-              <p className='text-xs text-muted-foreground'>
-                自动排除链式代理节点
-              </p>
-            </div>
-
+          <div className='space-y-2 shrink-0'>
+            <Input
+              placeholder='搜索节点名称、协议或标签...'
+              value={exchangeFilterText}
+              onChange={(e) => setExchangeFilterText(e.target.value)}
+              className='text-sm'
+            />
+            <p className='text-xs text-muted-foreground'>
+              自动排除链式代理节点
+            </p>
+          </div>
+          <div className='overflow-y-auto min-h-0 py-2'>
             {(() => {
               // 筛选逻辑
               const filteredNodes = savedNodes
