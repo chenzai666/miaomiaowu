@@ -1046,6 +1046,31 @@ func (p *TemplateV3Processor) buildDialerProxyConfigs(groupsNode *yaml.Node, gro
 		proxyGroupNames[name] = true
 	}
 
+	// Build group name -> proxies node map for resolving group references
+	groupProxiesMap := make(map[string]*yaml.Node)
+	for _, groupNode := range groupsNode.Content {
+		if groupNode.Kind != yaml.MappingNode {
+			continue
+		}
+		var name string
+		var proxies *yaml.Node
+		for i := 0; i < len(groupNode.Content); i += 2 {
+			switch groupNode.Content[i].Value {
+			case "name":
+				name = groupNode.Content[i+1].Value
+			case "proxies":
+				proxies = groupNode.Content[i+1]
+			}
+		}
+		if name != "" && proxies != nil && proxies.Kind == yaml.SequenceNode {
+			groupProxiesMap[name] = proxies
+		}
+	}
+
+	isBuiltIn := func(v string) bool {
+		return v == "DIRECT" || v == "REJECT" || v == "PASS"
+	}
+
 	var configs []dialerProxyConfig
 	for _, groupNode := range groupsNode.Content {
 		if groupNode.Kind != yaml.MappingNode {
@@ -1071,8 +1096,19 @@ func (p *TemplateV3Processor) buildDialerProxyConfigs(groupsNode *yaml.Node, gro
 		names := make(map[string]bool)
 		for _, n := range proxiesNode.Content {
 			v := n.Value
-			if !proxyGroupNames[v] && v != "DIRECT" && v != "REJECT" && v != "PASS" {
+			if isBuiltIn(v) {
+				continue
+			}
+			if !proxyGroupNames[v] {
 				names[v] = true
+			} else if refProxies, ok := groupProxiesMap[v]; ok {
+				// Resolve group reference: add the referenced group's proxy nodes
+				for _, rn := range refProxies.Content {
+					rv := rn.Value
+					if !proxyGroupNames[rv] && !isBuiltIn(rv) {
+						names[rv] = true
+					}
+				}
 			}
 		}
 		if len(names) > 0 {
