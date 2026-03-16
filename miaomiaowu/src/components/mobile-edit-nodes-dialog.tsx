@@ -131,7 +131,7 @@ export function MobileEditNodesDialog({
   open,
   onOpenChange,
   proxyGroups,
-  availableNodes,
+  availableNodes: _availableNodes,
   allNodes,
   onProxyGroupsChange,
   onSave,
@@ -208,21 +208,23 @@ export function MobileEditNodesDialog({
     return Array.from(tags).sort()
   }, [allNodes])
 
-  // 过滤可用节点
+  // 过滤可用节点：显示除当前代理组外的所有节点
   const filteredAvailableNodes = useMemo(() => {
-    return availableNodes.filter(nodeName => {
-      const node = allNodes.find(n => n.node_name === nodeName)
-      if (!node) return false
+    const currentGroup = currentEditingGroup ? proxyGroups.find(g => g.name === currentEditingGroup) : null
+    const currentProxies = new Set(currentGroup?.proxies || [])
 
-      // 搜索过滤
-      const matchesSearch = nodeName.toLowerCase().includes(searchQuery.toLowerCase())
-      if (!matchesSearch) return false
-
-      // 标签过滤
-      if (selectedTag === 'all') return true
-      return node.tag === selectedTag
-    })
-  }, [availableNodes, allNodes, searchQuery, selectedTag])
+    return allNodes
+      .filter(node => {
+        // 排除当前代理组已有的节点
+        if (currentProxies.has(node.node_name)) return false
+        // 搜索过滤
+        if (searchQuery && !node.node_name.toLowerCase().includes(searchQuery.toLowerCase())) return false
+        // 标签过滤
+        if (selectedTag !== 'all' && node.tag !== selectedTag) return false
+        return true
+      })
+      .map(n => n.node_name)
+  }, [allNodes, proxyGroups, currentEditingGroup, searchQuery, selectedTag])
 
   // 切换分组展开/折叠
   const toggleGroup = (groupName: string) => {
