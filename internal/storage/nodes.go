@@ -3,10 +3,54 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 )
+
+// scanNodeTags deserializes JSON tags and syncs Tag field.
+func scanNodeTags(node *Node, tagsJSON string) {
+	if tagsJSON != "" && tagsJSON != "[]" {
+		if err := json.Unmarshal([]byte(tagsJSON), &node.Tags); err != nil {
+			node.Tags = nil
+		}
+	}
+	if len(node.Tags) > 0 && node.Tag == "" {
+		node.Tag = node.Tags[0]
+	}
+	if node.Tag != "" && len(node.Tags) == 0 {
+		node.Tags = []string{node.Tag}
+	}
+}
+
+// serializeNodeTags returns JSON string for tags and syncs Tag/Tags fields.
+func serializeNodeTags(node *Node) string {
+	if len(node.Tags) == 0 && node.Tag != "" {
+		node.Tags = []string{node.Tag}
+	}
+	if len(node.Tags) > 0 {
+		node.Tag = node.Tags[0]
+	}
+	if len(node.Tags) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(node.Tags)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// HasAnyTag returns true if the node has at least one tag in the given set.
+func (n Node) HasAnyTag(tags map[string]bool) bool {
+	for _, t := range n.Tags {
+		if tags[t] {
+			return true
+		}
+	}
+	return false
+}
 
 // CheckNodeNameExists checks if a node name already exists for a user (excluding a specific node ID if provided).
 func (r *TrafficRepository) CheckNodeNameExists(ctx context.Context, nodeName, username string, excludeID int64) (bool, error) {
@@ -48,7 +92,7 @@ func (r *TrafficRepository) ListNodes(ctx context.Context, username string) ([]N
 		return nil, errors.New("username is required")
 	}
 
-	rows, err := r.db.QueryContext(ctx, `SELECT id, username, raw_url, node_name, protocol, parsed_config, clash_config, enabled, COALESCE(tag, 'personal'), COALESCE(original_server, ''), COALESCE(probe_server, ''), created_at, updated_at FROM nodes WHERE username = ? ORDER BY created_at DESC`, username)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, username, raw_url, node_name, protocol, parsed_config, clash_config, enabled, COALESCE(tag, 'personal'), COALESCE(original_server, ''), COALESCE(probe_server, ''), COALESCE(tags, '[]'), created_at, updated_at FROM nodes WHERE username = ? ORDER BY created_at DESC`, username)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}
@@ -58,10 +102,12 @@ func (r *TrafficRepository) ListNodes(ctx context.Context, username string) ([]N
 	for rows.Next() {
 		var node Node
 		var enabled int
-		if err := rows.Scan(&node.ID, &node.Username, &node.RawURL, &node.NodeName, &node.Protocol, &node.ParsedConfig, &node.ClashConfig, &enabled, &node.Tag, &node.OriginalServer, &node.ProbeServer, &node.CreatedAt, &node.UpdatedAt); err != nil {
+		var tagsJSON string
+		if err := rows.Scan(&node.ID, &node.Username, &node.RawURL, &node.NodeName, &node.Protocol, &node.ParsedConfig, &node.ClashConfig, &enabled, &node.Tag, &node.OriginalServer, &node.ProbeServer, &tagsJSON, &node.CreatedAt, &node.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan node: %w", err)
 		}
 		node.Enabled = enabled != 0
+		scanNodeTags(&node, tagsJSON)
 		nodes = append(nodes, node)
 	}
 
@@ -89,14 +135,16 @@ func (r *TrafficRepository) GetNode(ctx context.Context, id int64, username stri
 	}
 
 	var enabled int
-	row := r.db.QueryRowContext(ctx, `SELECT id, username, raw_url, node_name, protocol, parsed_config, clash_config, enabled, COALESCE(tag, 'personal'), COALESCE(original_server, ''), COALESCE(probe_server, ''), created_at, updated_at FROM nodes WHERE id = ? AND username = ? LIMIT 1`, id, username)
-	if err := row.Scan(&node.ID, &node.Username, &node.RawURL, &node.NodeName, &node.Protocol, &node.ParsedConfig, &node.ClashConfig, &enabled, &node.Tag, &node.OriginalServer, &node.ProbeServer, &node.CreatedAt, &node.UpdatedAt); err != nil {
+	var tagsJSON string
+	row := r.db.QueryRowContext(ctx, `SELECT id, username, raw_url, node_name, protocol, parsed_config, clash_config, enabled, COALESCE(tag, 'personal'), COALESCE(original_server, ''), COALESCE(probe_server, ''), COALESCE(tags, '[]'), created_at, updated_at FROM nodes WHERE id = ? AND username = ? LIMIT 1`, id, username)
+	if err := row.Scan(&node.ID, &node.Username, &node.RawURL, &node.NodeName, &node.Protocol, &node.ParsedConfig, &node.ClashConfig, &enabled, &node.Tag, &node.OriginalServer, &node.ProbeServer, &tagsJSON, &node.CreatedAt, &node.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return node, ErrNodeNotFound
 		}
 		return node, fmt.Errorf("get node: %w", err)
 	}
 	node.Enabled = enabled != 0
+	scanNodeTags(&node, tagsJSON)
 
 	return node, nil
 }
@@ -130,12 +178,14 @@ func (r *TrafficRepository) CreateNode(ctx context.Context, node Node) (Node, er
 		node.Tag = "手动输入"
 	}
 
+	tagsJSON := serializeNodeTags(&node)
+
 	enabled := 0
 	if node.Enabled {
 		enabled = 1
 	}
 
-	res, err := r.db.ExecContext(ctx, `INSERT INTO nodes (username, raw_url, node_name, protocol, parsed_config, clash_config, enabled, tag, original_server) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, node.Username, node.RawURL, node.NodeName, node.Protocol, node.ParsedConfig, node.ClashConfig, enabled, node.Tag, node.OriginalServer)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO nodes (username, raw_url, node_name, protocol, parsed_config, clash_config, enabled, tag, tags, original_server) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, node.Username, node.RawURL, node.NodeName, node.Protocol, node.ParsedConfig, node.ClashConfig, enabled, node.Tag, tagsJSON, node.OriginalServer)
 	if err != nil {
 		return Node{}, fmt.Errorf("create node: %w", err)
 	}
@@ -181,12 +231,14 @@ func (r *TrafficRepository) UpdateNode(ctx context.Context, node Node) (Node, er
 		node.Tag = "手动输入"
 	}
 
+	tagsJSON := serializeNodeTags(&node)
+
 	enabled := 0
 	if node.Enabled {
 		enabled = 1
 	}
 
-	res, err := r.db.ExecContext(ctx, `UPDATE nodes SET raw_url = ?, node_name = ?, protocol = ?, parsed_config = ?, clash_config = ?, enabled = ?, tag = ?, original_server = ?, probe_server = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND username = ?`, node.RawURL, node.NodeName, node.Protocol, node.ParsedConfig, node.ClashConfig, enabled, node.Tag, node.OriginalServer, node.ProbeServer, node.ID, node.Username)
+	res, err := r.db.ExecContext(ctx, `UPDATE nodes SET raw_url = ?, node_name = ?, protocol = ?, parsed_config = ?, clash_config = ?, enabled = ?, tag = ?, tags = ?, original_server = ?, probe_server = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND username = ?`, node.RawURL, node.NodeName, node.Protocol, node.ParsedConfig, node.ClashConfig, enabled, node.Tag, tagsJSON, node.OriginalServer, node.ProbeServer, node.ID, node.Username)
 	if err != nil {
 		return Node{}, fmt.Errorf("update node: %w", err)
 	}
@@ -287,7 +339,7 @@ func (r *TrafficRepository) BatchCreateNodes(ctx context.Context, nodes []Node) 
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO nodes (username, raw_url, node_name, protocol, parsed_config, clash_config, enabled, tag, original_server) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO nodes (username, raw_url, node_name, protocol, parsed_config, clash_config, enabled, tag, tags, original_server) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return nil, fmt.Errorf("prepare insert node: %w", err)
 	}
@@ -318,12 +370,14 @@ func (r *TrafficRepository) BatchCreateNodes(ctx context.Context, nodes []Node) 
 			node.Tag = "手动输入"
 		}
 
+		tagsJSON := serializeNodeTags(&node)
+
 		enabled := 0
 		if node.Enabled {
 			enabled = 1
 		}
 
-		res, err := stmt.ExecContext(ctx, node.Username, node.RawURL, node.NodeName, node.Protocol, node.ParsedConfig, node.ClashConfig, enabled, node.Tag, node.OriginalServer)
+		res, err := stmt.ExecContext(ctx, node.Username, node.RawURL, node.NodeName, node.Protocol, node.ParsedConfig, node.ClashConfig, enabled, node.Tag, tagsJSON, node.OriginalServer)
 		if err != nil {
 			return nil, fmt.Errorf("insert node %d: %w", idx+1, err)
 		}

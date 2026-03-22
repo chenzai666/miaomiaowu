@@ -37,3 +37,4 @@ miaomiaowu.db
 .idea
 VALIDATION_INTEGRATION_PLAN.md
 *.md
+bin/*

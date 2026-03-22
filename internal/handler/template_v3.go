@@ -218,7 +218,7 @@ func (h *TemplateV3Handler) handlePreviewWithTags(w http.ResponseWriter, r *http
 			continue
 		}
 		// If tags are specified, filter by tags
-		if len(req.SelectedTags) > 0 && !selectedTagsSet[node.Tag] {
+		if len(req.SelectedTags) > 0 && !node.HasAnyTag(selectedTagsSet) {
 			continue
 		}
 		// Parse clash config

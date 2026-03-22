@@ -59,6 +59,7 @@ type SubscribeFile = {
   template_filename: string
   selected_tags: string[]
   custom_short_code?: string
+  raw_output: boolean
   expire_at?: string | null
   created_at: string
   updated_at: string
@@ -338,6 +339,8 @@ function SubscribeFilesPage() {
     name: '',
     description: '',
     filename: '',
+    overwrite_id: 0,
+    raw_output: false,
   })
   const [uploadFile, setUploadFile] = useState<File | null>(null)
 
@@ -487,7 +490,7 @@ function SubscribeFilesPage() {
     queryKey: ['all-nodes-with-tags'],
     queryFn: async () => {
       const response = await api.get('/api/admin/nodes')
-      return response.data as { nodes: Array<{ id: number; node_name: string; tag: string }> }
+      return response.data as { nodes: Array<{ id: number; node_name: string; tag: string; tags: string[] }> }
     },
     enabled: Boolean(auth.accessToken && (isExternalSubsExpanded || hasTemplateBindings)),
   })
@@ -497,10 +500,11 @@ function SubscribeFilesPage() {
     const nodes = allNodesData?.nodes ?? []
     const grouped: Record<string, string[]> = {}
     for (const node of nodes) {
-      if (!grouped[node.tag]) {
-        grouped[node.tag] = []
+      const nodeTags = node.tags?.length ? node.tags : (node.tag ? [node.tag] : [])
+      for (const t of nodeTags) {
+        if (!grouped[t]) grouped[t] = []
+        grouped[t].push(node.node_name)
       }
-      grouped[node.tag].push(node.node_name)
     }
     return grouped
   }, [allNodesData])
@@ -510,9 +514,8 @@ function SubscribeFilesPage() {
     const nodes = allNodesData?.nodes ?? []
     const tags = new Set<string>()
     for (const node of nodes) {
-      if (node.tag) {
-        tags.add(node.tag)
-      }
+      const nodeTags = node.tags?.length ? node.tags : (node.tag ? [node.tag] : [])
+      for (const t of nodeTags) tags.add(t)
     }
     return Array.from(tags).sort()
   }, [allNodesData])
@@ -544,9 +547,16 @@ function SubscribeFilesPage() {
 
       const formData = new FormData()
       formData.append('file', uploadFile)
-      formData.append('name', uploadForm.name || uploadFile.name)
-      formData.append('description', uploadForm.description)
-      formData.append('filename', uploadForm.filename || uploadFile.name)
+      if (uploadForm.overwrite_id > 0) {
+        formData.append('overwrite_id', String(uploadForm.overwrite_id))
+      } else {
+        formData.append('name', uploadForm.name || uploadFile.name)
+        formData.append('description', uploadForm.description)
+        formData.append('filename', uploadForm.filename || uploadFile.name)
+      }
+      if (uploadForm.raw_output) {
+        formData.append('raw_output', 'true')
+      }
 
       const response = await api.post('/api/admin/subscribe-files/upload', formData, {
         headers: {
@@ -558,15 +568,43 @@ function SubscribeFilesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['subscribe-files'] })
       queryClient.invalidateQueries({ queryKey: ['user-subscriptions'] })
-      toast.success('文件上传成功')
+      toast.success(uploadForm.overwrite_id > 0 ? '文件覆盖成功' : '文件上传成功')
       setUploadDialogOpen(false)
-      setUploadForm({ name: '', description: '', filename: '' })
+      setUploadForm({ name: '', description: '', filename: '', overwrite_id: 0, raw_output: false })
       setUploadFile(null)
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || '上传失败')
     },
   })
+
+  // 排序订阅
+  const reorderMutation = useMutation({
+    mutationFn: async (ids: number[]) => {
+      await api.put('/api/admin/subscribe-files/reorder', { ids })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subscribe-files'] })
+      queryClient.invalidateQueries({ queryKey: ['user-subscriptions'] })
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || '排序失败')
+    },
+  })
+
+  const handleMoveUp = (index: number) => {
+    if (index === 0) return
+    const newFiles = [...files]
+    ;[newFiles[index - 1], newFiles[index]] = [newFiles[index], newFiles[index - 1]]
+    reorderMutation.mutate(newFiles.map(f => f.id))
+  }
+
+  const handleMoveDown = (index: number) => {
+    if (index >= files.length - 1) return
+    const newFiles = [...files]
+    ;[newFiles[index], newFiles[index + 1]] = [newFiles[index + 1], newFiles[index]]
+    reorderMutation.mutate(newFiles.map(f => f.id))
+  }
 
   // 删除订阅
   const deleteMutation = useMutation({
@@ -1409,6 +1447,10 @@ function SubscribeFilesPage() {
   const handleUpload = () => {
     if (!uploadFile) {
       toast.error('请选择文件')
+      return
+    }
+    if (uploadForm.overwrite_id === 0 && !uploadForm.name && !uploadFile.name) {
+      toast.error('请填写订阅名称')
       return
     }
     uploadMutation.mutate()
@@ -2335,53 +2377,84 @@ function SubscribeFilesPage() {
                     <DialogHeader>
                       <DialogTitle>上传文件</DialogTitle>
                       <DialogDescription>
-                        上传本地 YAML 格式的 Clash 订阅文件
+                        上传本地文件作为订阅配置，或覆盖已有订阅的文件内容
                       </DialogDescription>
                     </DialogHeader>
                     <div className='space-y-4 py-4'>
+                      <div className='space-y-2'>
+                        <Label>覆盖已有订阅</Label>
+                        <Select
+                          value={String(uploadForm.overwrite_id)}
+                          onValueChange={(val) => setUploadForm({ ...uploadForm, overwrite_id: Number(val) })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder='新建订阅' />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value='0'>新建订阅</SelectItem>
+                            {files.map((f) => (
+                              <SelectItem key={f.id} value={String(f.id)}>
+                                {f.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className='flex items-center justify-between'>
+                        <Label htmlFor='upload-raw-output'>这不是 Clash 配置</Label>
+                        <Switch
+                          id='upload-raw-output'
+                          checked={uploadForm.raw_output}
+                          onCheckedChange={(checked) => setUploadForm({ ...uploadForm, raw_output: checked })}
+                        />
+                      </div>
                       <div className='space-y-2'>
                         <Label htmlFor='upload-file'>选择文件 *</Label>
                         <Input
                           id='upload-file'
                           type='file'
-                          accept='.yaml,.yml'
+                          accept={uploadForm.raw_output ? undefined : '.yaml,.yml'}
                           onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                         />
                       </div>
-                      <div className='space-y-2'>
-                        <Label htmlFor='upload-name'>订阅名称（可选）</Label>
-                        <Input
-                          id='upload-name'
-                          placeholder='留空则使用文件名'
-                          value={uploadForm.name}
-                          onChange={(e) => setUploadForm({ ...uploadForm, name: e.target.value })}
-                        />
-                      </div>
-                      <div className='space-y-2'>
-                        <Label htmlFor='upload-filename'>文件名（可选）</Label>
-                        <Input
-                          id='upload-filename'
-                          placeholder='留空则使用原文件名'
-                          value={uploadForm.filename}
-                          onChange={(e) => setUploadForm({ ...uploadForm, filename: e.target.value })}
-                        />
-                      </div>
-                      <div className='space-y-2'>
-                        <Label htmlFor='upload-description'>说明（可选）</Label>
-                        <Textarea
-                          id='upload-description'
-                          placeholder='订阅说明信息'
-                          value={uploadForm.description}
-                          onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })}
-                        />
-                      </div>
+                      {uploadForm.overwrite_id === 0 && (
+                        <>
+                          <div className='space-y-2'>
+                            <Label htmlFor='upload-name'>订阅名称（可选）</Label>
+                            <Input
+                              id='upload-name'
+                              placeholder='留空则使用文件名'
+                              value={uploadForm.name}
+                              onChange={(e) => setUploadForm({ ...uploadForm, name: e.target.value })}
+                            />
+                          </div>
+                          <div className='space-y-2'>
+                            <Label htmlFor='upload-filename'>文件名（可选）</Label>
+                            <Input
+                              id='upload-filename'
+                              placeholder='留空则使用原文件名'
+                              value={uploadForm.filename}
+                              onChange={(e) => setUploadForm({ ...uploadForm, filename: e.target.value })}
+                            />
+                          </div>
+                          <div className='space-y-2'>
+                            <Label htmlFor='upload-description'>说明（可选）</Label>
+                            <Textarea
+                              id='upload-description'
+                              placeholder='订阅说明信息'
+                              value={uploadForm.description}
+                              onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })}
+                            />
+                          </div>
+                        </>
+                      )}
                     </div>
                     <DialogFooter>
                       <Button variant='outline' onClick={() => setUploadDialogOpen(false)}>
                         取消
                       </Button>
                       <Button onClick={handleUpload} disabled={uploadMutation.isPending}>
-                        {uploadMutation.isPending ? '上传中...' : '上传'}
+                        {uploadMutation.isPending ? '上传中...' : (uploadForm.overwrite_id > 0 ? '覆盖上传' : '上传')}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
@@ -2419,15 +2492,12 @@ function SubscribeFilesPage() {
                   {
                     header: '订阅名称',
                     cell: (file) => (
-                      <div className='flex items-center gap-2 flex-wrap'>
-                        <Badge variant='outline' className={TYPE_COLORS[file.type]}>
-                          {TYPE_LABELS[file.type]}
-                        </Badge>
-                        <span className='font-medium'>{file.name}</span>
-                        {file.latest_version && (
-                          <Badge variant='secondary'>v{file.latest_version}</Badge>
-                        )}
-                      </div>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className='font-medium truncate block max-w-[16ch]'>{file.name}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>{file.name}</TooltipContent>
+                      </Tooltip>
                     ),
                   },
                   {
@@ -2829,7 +2899,7 @@ function SubscribeFilesPage() {
                               disabled={updateMetadataMutation.isPending}
                             >
                               <span className="truncate">
-                                {selectedTags.length > 0 ? `${selectedTags.length} 个标签` : '全部节点'}
+                                {selectedTags.length === 1 ? selectedTags[0] : selectedTags.length > 1 ? `${selectedTags.length} 个标签` : '全部节点'}
                               </span>
                               <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
                             </Button>
@@ -2910,8 +2980,30 @@ function SubscribeFilesPage() {
                   }] as DataTableColumn<SubscribeFile>[] : []),
                   {
                     header: '操作',
-                    cell: (file) => (
+                    cell: (file) => {
+                      const idx = files.findIndex(f => f.id === file.id)
+                      return (
                       <div className='flex items-center gap-1'>
+                        <Button
+                          variant='ghost'
+                          size='icon'
+                          className='h-7 w-7'
+                          onClick={() => handleMoveUp(idx)}
+                          disabled={idx === 0 || reorderMutation.isPending}
+                          title='上移'
+                        >
+                          <ChevronUp className='h-4 w-4' />
+                        </Button>
+                        <Button
+                          variant='ghost'
+                          size='icon'
+                          className='h-7 w-7'
+                          onClick={() => handleMoveDown(idx)}
+                          disabled={idx >= files.length - 1 || reorderMutation.isPending}
+                          title='下移'
+                        >
+                          <ChevronDown className='h-4 w-4' />
+                        </Button>
                         <Button
                           variant='ghost'
                           size='sm'
@@ -2954,10 +3046,10 @@ function SubscribeFilesPage() {
                           </AlertDialogContent>
                         </AlertDialog>
                       </div>
-                    ),
+                    )},
                     headerClassName: 'text-center',
                     cellClassName: 'text-center',
-                    width: '120px'
+                    width: '180px'
                   }
                 ] as DataTableColumn<SubscribeFile>[]}
 
@@ -2968,6 +3060,11 @@ function SubscribeFilesPage() {
                         <Badge variant='outline' className={TYPE_COLORS[file.type]}>
                           {TYPE_LABELS[file.type]}
                         </Badge>
+                        {file.raw_output && (
+                          <Badge variant='outline' className='bg-orange-500/10 text-orange-700 dark:text-orange-400'>
+                            原始输出
+                          </Badge>
+                        )}
                         <div className='font-medium text-sm truncate'>{file.name}</div>
                       </div>
                       <AlertDialog>

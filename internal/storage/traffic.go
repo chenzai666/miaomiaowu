@@ -213,7 +213,8 @@ type Node struct {
 	ParsedConfig   string
 	ClashConfig    string
 	Enabled        bool
-	Tag            string
+	Tag            string   // 向后兼容，等于 Tags[0]
+	Tags           []string // 多标签支持
 	OriginalServer string
 	ProbeServer    string // Probe server name for binding
 	CreatedAt      time.Time
@@ -233,6 +234,8 @@ type SubscribeFile struct {
 	AutoSyncCustomRules bool       // Whether to automatically sync custom rules to this file
 	TemplateFilename    string     // 绑定的 V3 模板文件名，为空表示未绑定模板
 	SelectedTags        []string   // 选中的节点标签，为空表示使用所有节点
+	RawOutput           bool       // 非Clash配置，直接输出原始内容
+	SortOrder           int        // 排序权重，值越小越靠前
 	ExpireAt            *time.Time // Optional expiration timestamp
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -249,7 +252,6 @@ type UserSettings struct {
 	SyncTraffic         bool       // Sync traffic info from external subscriptions
 	EnableProbeBinding  bool       // Enable probe server binding for nodes
 	CustomRulesEnabled  bool       // Enable custom rules feature
-	EnableShortLink     bool       // Enable short link feature for subscriptions
 	TemplateVersion     string     // Template version: "v1" (file-based), "v2" (database/ACL), "v3" (mihomo-style)
 	EnableProxyProvider bool       // Enable proxy provider feature
 	NodeOrder           []int64    // Node display order (array of node IDs)
@@ -270,6 +272,7 @@ type SystemConfig struct {
 	EnableSubInfoNodes      bool   // Enable subscription info nodes (expire time and remaining traffic)
 	SubInfoExpirePrefix     string // Prefix for expire time node, default "📅过期时间"
 	SubInfoTrafficPrefix    string // Prefix for remaining traffic node, default "⌛剩余流量"
+	EnableShortLink         bool   // 启用短链接（全局设置）
 }
 
 // ExternalSubscription represents an external subscription URL imported by user.
@@ -642,6 +645,13 @@ CREATE INDEX IF NOT EXISTS idx_nodes_enabled ON nodes(enabled);
 		return err
 	}
 
+	// Add tags column (JSON array) for multi-tag support
+	if err := r.ensureNodeColumn("tags", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	// Migrate existing tag data to tags column
+	r.db.Exec(`UPDATE nodes SET tags = '["' || REPLACE(tag, '"', '\"') || '"]' WHERE (tags = '[]' OR tags = '') AND tag != '' AND tag IS NOT NULL`)
+
 	// Create tag index after ensuring column exists
 	if _, err := r.db.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_tag ON nodes(tag);`); err != nil {
 		return fmt.Errorf("create tag index: %w", err)
@@ -847,6 +857,11 @@ CREATE INDEX IF NOT EXISTS idx_external_subscriptions_url ON external_subscripti
 		return fmt.Errorf("create subscribe_files custom_short_code index: %w", err)
 	}
 
+	// Add raw_output column to subscribe_files table
+	if err := r.ensureSubscribeFileColumn("raw_output", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+
 	// Create system_config table for global settings
 	const systemConfigSchema = `
 CREATE TABLE IF NOT EXISTS system_config (
@@ -900,6 +915,11 @@ WHERE NOT EXISTS (SELECT 1 FROM system_config WHERE id = 1);
 		return err
 	}
 
+	// Add enable_short_link column to system_config table (default enabled)
+	if err := r.ensureSystemConfigColumn("enable_short_link", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+
 	const customRulesSchema = `
 CREATE TABLE IF NOT EXISTS custom_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -937,6 +957,11 @@ CREATE INDEX IF NOT EXISTS idx_custom_rules_enabled ON custom_rules(enabled);
 
 	// 添加 selected_tags 字段，用于存储选中的节点标签（JSON 数组）
 	if err := r.ensureSubscribeFileColumn("selected_tags", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+
+	// 添加 sort_order 字段，用于自定义排序
+	if err := r.ensureSubscribeFileColumn("sort_order", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 
@@ -2451,6 +2476,11 @@ func (r *TrafficRepository) UpdateUserCustomShortCode(ctx context.Context, usern
 	}
 	code = strings.TrimSpace(code)
 
+	// 确保 user_tokens 记录存在（新用户可能尚未登录，没有记录）
+	if _, err := r.GetOrCreateUserToken(ctx, username); err != nil {
+		return fmt.Errorf("ensure user token exists: %w", err)
+	}
+
 	res, err := r.db.ExecContext(ctx, `UPDATE user_tokens SET custom_user_short_code = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?`, code, username)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -2703,6 +2733,19 @@ func (r *TrafficRepository) GetUser(ctx context.Context, username string) (User,
 	user.IsActive = active != 0
 
 	return user, nil
+}
+
+// GetAdminUsername returns the username of the first admin user.
+func (r *TrafficRepository) GetAdminUsername(ctx context.Context) (string, error) {
+	if r == nil || r.db == nil {
+		return "", errors.New("traffic repository not initialized")
+	}
+	var username string
+	err := r.db.QueryRowContext(ctx, `SELECT username FROM users WHERE role = 'admin' LIMIT 1`).Scan(&username)
+	if err != nil {
+		return "", fmt.Errorf("get admin username: %w", err)
+	}
+	return username, nil
 }
 
 // ListUsers returns up to limit users ordered by creation time.
@@ -3308,11 +3351,11 @@ func (r *TrafficRepository) GetUserSubscriptions(ctx context.Context, username s
 	}
 
 	const stmt = `
-		SELECT s.id, s.name, COALESCE(s.description, ''), COALESCE(s.url, ''), s.type, s.filename, COALESCE(s.file_short_code, ''), COALESCE(s.custom_short_code, ''), COALESCE(s.auto_sync_custom_rules, 0), COALESCE(s.template_filename, ''), s.expire_at, s.created_at, s.updated_at
+		SELECT s.id, s.name, COALESCE(s.description, ''), COALESCE(s.url, ''), s.type, s.filename, COALESCE(s.file_short_code, ''), COALESCE(s.custom_short_code, ''), COALESCE(s.auto_sync_custom_rules, 0), COALESCE(s.template_filename, ''), COALESCE(s.sort_order, 0), s.expire_at, s.created_at, s.updated_at
 		FROM subscribe_files s
 		INNER JOIN user_subscriptions us ON s.id = us.subscription_id
 		WHERE us.username = ?
-		ORDER BY s.created_at DESC
+		ORDER BY s.sort_order ASC, s.created_at DESC
 	`
 	rows, err := r.db.QueryContext(ctx, stmt, username)
 	if err != nil {
@@ -3325,7 +3368,7 @@ func (r *TrafficRepository) GetUserSubscriptions(ctx context.Context, username s
 		var sub SubscribeFile
 		var autoSync int
 		var expireAt sql.NullTime
-		if err := rows.Scan(&sub.ID, &sub.Name, &sub.Description, &sub.URL, &sub.Type, &sub.Filename, &sub.FileShortCode, &sub.CustomShortCode, &autoSync, &sub.TemplateFilename, &expireAt, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+		if err := rows.Scan(&sub.ID, &sub.Name, &sub.Description, &sub.URL, &sub.Type, &sub.Filename, &sub.FileShortCode, &sub.CustomShortCode, &autoSync, &sub.TemplateFilename, &sub.SortOrder, &expireAt, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan subscription: %w", err)
 		}
 		sub.AutoSyncCustomRules = autoSync != 0
@@ -3354,11 +3397,11 @@ func (r *TrafficRepository) GetUserSettings(ctx context.Context, username string
 		return settings, errors.New("username is required")
 	}
 
-	const stmt = `SELECT username, force_sync_external, COALESCE(match_rule, 'node_name'), COALESCE(sync_scope, 'saved_only'), COALESCE(keep_node_name, 1), COALESCE(cache_expire_minutes, 0), COALESCE(sync_traffic, 0), COALESCE(enable_probe_binding, 0), COALESCE(custom_rules_enabled, 0), COALESCE(enable_short_link, 0), COALESCE(template_version, 'v2'), COALESCE(enable_proxy_provider, 0), COALESCE(node_order, '[]'), COALESCE(node_name_filter, '剩余|流量|到期|订阅|时间|重置'), COALESCE(debug_enabled, 0), COALESCE(debug_log_path, ''), debug_started_at, created_at, updated_at FROM user_settings WHERE username = ? LIMIT 1`
-	var forceSyncInt, keepNodeNameInt, syncTrafficInt, enableProbeBindingInt, customRulesEnabledInt, enableShortLinkInt, enableProxyProviderInt, debugEnabledInt int
+	const stmt = `SELECT username, force_sync_external, COALESCE(match_rule, 'node_name'), COALESCE(sync_scope, 'saved_only'), COALESCE(keep_node_name, 1), COALESCE(cache_expire_minutes, 0), COALESCE(sync_traffic, 0), COALESCE(enable_probe_binding, 0), COALESCE(custom_rules_enabled, 0), COALESCE(template_version, 'v2'), COALESCE(enable_proxy_provider, 0), COALESCE(node_order, '[]'), COALESCE(node_name_filter, '剩余|流量|到期|订阅|时间|重置'), COALESCE(debug_enabled, 0), COALESCE(debug_log_path, ''), debug_started_at, created_at, updated_at FROM user_settings WHERE username = ? LIMIT 1`
+	var forceSyncInt, keepNodeNameInt, syncTrafficInt, enableProbeBindingInt, customRulesEnabledInt, enableProxyProviderInt, debugEnabledInt int
 	var nodeOrderJSON string
 	var debugStartedAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, stmt, username).Scan(&settings.Username, &forceSyncInt, &settings.MatchRule, &settings.SyncScope, &keepNodeNameInt, &settings.CacheExpireMinutes, &syncTrafficInt, &enableProbeBindingInt, &customRulesEnabledInt, &enableShortLinkInt, &settings.TemplateVersion, &enableProxyProviderInt, &nodeOrderJSON, &settings.NodeNameFilter, &debugEnabledInt, &settings.DebugLogPath, &debugStartedAt, &settings.CreatedAt, &settings.UpdatedAt)
+	err := r.db.QueryRowContext(ctx, stmt, username).Scan(&settings.Username, &forceSyncInt, &settings.MatchRule, &settings.SyncScope, &keepNodeNameInt, &settings.CacheExpireMinutes, &syncTrafficInt, &enableProbeBindingInt, &customRulesEnabledInt, &settings.TemplateVersion, &enableProxyProviderInt, &nodeOrderJSON, &settings.NodeNameFilter, &debugEnabledInt, &settings.DebugLogPath, &debugStartedAt, &settings.CreatedAt, &settings.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return settings, ErrUserSettingsNotFound
@@ -3371,7 +3414,6 @@ func (r *TrafficRepository) GetUserSettings(ctx context.Context, username string
 	settings.SyncTraffic = syncTrafficInt == 1
 	settings.EnableProbeBinding = enableProbeBindingInt == 1
 	settings.CustomRulesEnabled = customRulesEnabledInt == 1
-	settings.EnableShortLink = enableShortLinkInt == 1
 	settings.EnableProxyProvider = enableProxyProviderInt == 1
 	settings.DebugEnabled = debugEnabledInt == 1
 
@@ -3429,11 +3471,6 @@ func (r *TrafficRepository) UpsertUserSettings(ctx context.Context, settings Use
 		customRulesEnabledInt = 1
 	}
 
-	enableShortLinkInt := 0
-	if settings.EnableShortLink {
-		enableShortLinkInt = 1
-	}
-
 	// Handle template version, default to "v2" for backward compatibility
 	templateVersion := strings.TrimSpace(settings.TemplateVersion)
 	if templateVersion == "" {
@@ -3481,8 +3518,8 @@ func (r *TrafficRepository) UpsertUserSettings(ctx context.Context, settings Use
 	}
 
 	const stmt = `
-		INSERT INTO user_settings (username, force_sync_external, match_rule, sync_scope, keep_node_name, cache_expire_minutes, sync_traffic, enable_probe_binding, custom_rules_enabled, enable_short_link, template_version, enable_proxy_provider, node_order, node_name_filter, debug_enabled, debug_log_path, debug_started_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO user_settings (username, force_sync_external, match_rule, sync_scope, keep_node_name, cache_expire_minutes, sync_traffic, enable_probe_binding, custom_rules_enabled, template_version, enable_proxy_provider, node_order, node_name_filter, debug_enabled, debug_log_path, debug_started_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(username) DO UPDATE SET
 			force_sync_external = excluded.force_sync_external,
 			match_rule = excluded.match_rule,
@@ -3492,7 +3529,6 @@ func (r *TrafficRepository) UpsertUserSettings(ctx context.Context, settings Use
 			sync_traffic = excluded.sync_traffic,
 			enable_probe_binding = excluded.enable_probe_binding,
 			custom_rules_enabled = excluded.custom_rules_enabled,
-			enable_short_link = excluded.enable_short_link,
 			template_version = excluded.template_version,
 			enable_proxy_provider = excluded.enable_proxy_provider,
 			node_order = excluded.node_order,
@@ -3503,7 +3539,7 @@ func (r *TrafficRepository) UpsertUserSettings(ctx context.Context, settings Use
 			updated_at = CURRENT_TIMESTAMP
 	`
 
-	if _, err := r.db.ExecContext(ctx, stmt, username, forceSyncInt, matchRule, syncScope, keepNodeNameInt, cacheExpireMinutes, syncTrafficInt, enableProbeBindingInt, customRulesEnabledInt, enableShortLinkInt, templateVersion, enableProxyProviderInt, nodeOrderJSON, nodeNameFilter, debugEnabledInt, settings.DebugLogPath, settings.DebugStartedAt); err != nil {
+	if _, err := r.db.ExecContext(ctx, stmt, username, forceSyncInt, matchRule, syncScope, keepNodeNameInt, cacheExpireMinutes, syncTrafficInt, enableProbeBindingInt, customRulesEnabledInt, templateVersion, enableProxyProviderInt, nodeOrderJSON, nodeNameFilter, debugEnabledInt, settings.DebugLogPath, settings.DebugStartedAt); err != nil {
 		return fmt.Errorf("upsert user settings: %w", err)
 	}
 
@@ -4150,10 +4186,10 @@ func (r *TrafficRepository) GetSubscribeFilesWithAutoSync(ctx context.Context) (
 		return nil, errors.New("traffic repository not initialized")
 	}
 
-	const query = `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), auto_sync_custom_rules, COALESCE(template_filename, ''), expire_at, created_at, updated_at
+	const query = `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), auto_sync_custom_rules, COALESCE(template_filename, ''), COALESCE(sort_order, 0), expire_at, created_at, updated_at
 		FROM subscribe_files
 		WHERE auto_sync_custom_rules = 1
-		ORDER BY created_at DESC`
+		ORDER BY sort_order ASC, created_at DESC`
 
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
@@ -4166,7 +4202,7 @@ func (r *TrafficRepository) GetSubscribeFilesWithAutoSync(ctx context.Context) (
 		var file SubscribeFile
 		var autoSync int
 		var expireAt sql.NullTime
-		if err := rows.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &autoSync, &file.TemplateFilename, &expireAt, &file.CreatedAt, &file.UpdatedAt); err != nil {
+		if err := rows.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &autoSync, &file.TemplateFilename, &file.SortOrder, &expireAt, &file.CreatedAt, &file.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan subscribe file: %w", err)
 		}
 		file.AutoSyncCustomRules = autoSync != 0
@@ -4510,16 +4546,16 @@ func (r *TrafficRepository) DeleteProxyProviderConfig(ctx context.Context, id in
 func (r *TrafficRepository) GetSystemConfig(ctx context.Context) (SystemConfig, error) {
 	const query = `
 SELECT proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_mode_timeout,
-       enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix
+       enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix, COALESCE(enable_short_link, 1)
 FROM system_config
 WHERE id = 1
 `
 
 	var cfg SystemConfig
-	var compatibilityMode, silentMode, silentModeTimeout, enableSubInfoNodes int
+	var compatibilityMode, silentMode, silentModeTimeout, enableSubInfoNodes, enableShortLinkInt int
 	err := r.db.QueryRowContext(ctx, query).Scan(
 		&cfg.ProxyGroupsSourceURL, &compatibilityMode, &silentMode, &silentModeTimeout,
-		&enableSubInfoNodes, &cfg.SubInfoExpirePrefix, &cfg.SubInfoTrafficPrefix,
+		&enableSubInfoNodes, &cfg.SubInfoExpirePrefix, &cfg.SubInfoTrafficPrefix, &enableShortLinkInt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -4528,6 +4564,7 @@ WHERE id = 1
 				SilentModeTimeout:    15,
 				SubInfoExpirePrefix:  "📅过期时间",
 				SubInfoTrafficPrefix: "⌛剩余流量",
+				EnableShortLink:      true,
 			}, nil
 		}
 		return SystemConfig{}, fmt.Errorf("query system config: %w", err)
@@ -4540,6 +4577,7 @@ WHERE id = 1
 		cfg.SilentModeTimeout = 15
 	}
 	cfg.EnableSubInfoNodes = enableSubInfoNodes != 0
+	cfg.EnableShortLink = enableShortLinkInt != 0
 	if cfg.SubInfoExpirePrefix == "" {
 		cfg.SubInfoExpirePrefix = "📅过期时间"
 	}
@@ -4561,6 +4599,7 @@ SET proxy_groups_source_url = ?,
     enable_sub_info_nodes = ?,
     sub_info_expire_prefix = ?,
     sub_info_traffic_prefix = ?,
+    enable_short_link = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 1
 `
@@ -4581,6 +4620,10 @@ WHERE id = 1
 	if cfg.EnableSubInfoNodes {
 		enableSubInfoNodes = 1
 	}
+	enableShortLink := 0
+	if cfg.EnableShortLink {
+		enableShortLink = 1
+	}
 	subInfoExpirePrefix := cfg.SubInfoExpirePrefix
 	if subInfoExpirePrefix == "" {
 		subInfoExpirePrefix = "📅过期时间"
@@ -4592,7 +4635,7 @@ WHERE id = 1
 
 	result, err := r.db.ExecContext(ctx, updateStmt,
 		cfg.ProxyGroupsSourceURL, compatibilityMode, silentMode, silentModeTimeout,
-		enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix,
+		enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix, enableShortLink,
 	)
 	if err != nil {
 		return fmt.Errorf("update system config: %w", err)
@@ -4607,12 +4650,12 @@ WHERE id = 1
 	if rowsAffected == 0 {
 		const insertStmt = `
 INSERT INTO system_config (id, proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_mode_timeout,
-                           enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                           enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix, enable_short_link)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 		if _, err := r.db.ExecContext(ctx, insertStmt,
 			cfg.ProxyGroupsSourceURL, compatibilityMode, silentMode, silentModeTimeout,
-			enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix,
+			enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix, enableShortLink,
 		); err != nil {
 			return fmt.Errorf("insert system config: %w", err)
 		}

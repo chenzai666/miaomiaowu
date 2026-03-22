@@ -20,7 +20,7 @@
 ### 探针支持
 - [Nezha](https://github.com/naiba/nezha) 面板
 - [DStatus](https://github.com/DokiDoki1103/dstatus) 监控
-- [Komari](https://github.com/missuo/komari) 面板
+- [Komari](https://github.com/komari-monitor/komari) 面板
 
 ### 体验[Demo](https://demo.miaomiaowu.net)  
 账户/密码: test / test123
@@ -250,6 +250,31 @@ MIT License
 <details>
 <summary>更新日志</summary>
 
+### v0.5.7 (2026-03-18)
+- 🌈 支持订阅排序
+- 🌈 优化模板v3中转代理组选择
+- 🌈 优化移动端编辑节点可用节点展示
+- 🌈 增强节点标签管理，支持多标签
+- 🛠️ fix:兼容老版链式代理处理
+- 🛠️ fix:代理组选择中转节点后对代理集合未生效
+- 🛠️ fix:短链接开关错误的放在了用户配置，而不是系统配置
+- 🛠️ fix:选择中转节点的dialog溢出屏幕外
+### v0.5.6 (2026-03-11)
+- 🌈 增加上传覆盖订阅与其他非clash订阅配置校验开关
+- 🛠️ fix:短链接开关错误的放在了用户配置，而不是系统配置
+- 🛠️ fix:普通用户获取订阅时查询不到节点信息
+- 🛠️ fix:订阅节点标签过滤不起作用
+### v0.5.5 (2026-03-10)
+- 🌈 增加订阅安全封禁规则
+- 🌈 自定义短链接功能优化
+- 🌈 优化节点管理移动端显示
+- 🛠️ fix:自定义短链接被静默模式拦截导致拉取订阅失败
+- 🛠️ fix:小火箭的vless enc没有根据客户端兼容模式开关处理
+- 🛠️ fix:修改模板后没有刷新绑定的配置
+- 🛠️ fix:中转代理组配置被错误移除
+- 🛠️ fix:选择代理组类型或中转节点后气泡未关闭
+- 🛠️ fix:自定义连接重复的问题
+- 🛠️ fix:解析ss协议时去除ipv6地址的括号[#60](https://github.com/iluobei/miaomiaowu/issues/60)
 ### v0.5.4 (2026-03-05)
 - 🌈 优化更新日志与debug功能显示
 - 🌈 新增设置自定义订阅连接的功能(Beta)

@@ -246,6 +246,10 @@ func (h *nodesHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		ClashConfig:  req.ClashConfig,
 		Enabled:      req.Enabled,
 		Tag:          req.Tag,
+		Tags:         req.Tags,
+	}
+	if len(node.Tags) == 0 && node.Tag != "" {
+		node.Tags = []string{node.Tag}
 	}
 
 	created, err := h.repo.CreateNode(r.Context(), node)
@@ -298,6 +302,7 @@ func (h *nodesHandler) handleBatchCreate(w http.ResponseWriter, r *http.Request)
 			ClashConfig:  n.ClashConfig,
 			Enabled:      n.Enabled,
 			Tag:          n.Tag,
+			Tags:         n.Tags,
 		})
 	}
 
@@ -413,6 +418,10 @@ func (h *nodesHandler) handleUpdate(w http.ResponseWriter, r *http.Request, idSe
 	}
 	if req.Tag != "" {
 		existing.Tag = req.Tag
+	}
+	if len(req.Tags) > 0 {
+		existing.Tags = req.Tags
+		existing.Tag = req.Tags[0]
 	}
 	existing.Enabled = req.Enabled
 
@@ -922,13 +931,14 @@ func (h *nodesHandler) handleBatchRename(w http.ResponseWriter, r *http.Request)
 }
 
 type nodeRequest struct {
-	RawURL       string `json:"raw_url"`
-	NodeName     string `json:"node_name"`
-	Protocol     string `json:"protocol"`
-	ParsedConfig string `json:"parsed_config"`
-	ClashConfig  string `json:"clash_config"`
-	Enabled      bool   `json:"enabled"`
-	Tag          string `json:"tag"`
+	RawURL       string   `json:"raw_url"`
+	NodeName     string   `json:"node_name"`
+	Protocol     string   `json:"protocol"`
+	ParsedConfig string   `json:"parsed_config"`
+	ClashConfig  string   `json:"clash_config"`
+	Enabled      bool     `json:"enabled"`
+	Tag          string   `json:"tag"`
+	Tags         []string `json:"tags"`
 }
 
 type nodeDTO struct {
@@ -940,6 +950,7 @@ type nodeDTO struct {
 	ClashConfig    string    `json:"clash_config"`
 	Enabled        bool      `json:"enabled"`
 	Tag            string    `json:"tag"`
+	Tags           []string  `json:"tags"`
 	OriginalServer string    `json:"original_server"`
 	ProbeServer    string    `json:"probe_server"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -947,6 +958,10 @@ type nodeDTO struct {
 }
 
 func convertNode(node storage.Node) nodeDTO {
+	tags := node.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	return nodeDTO{
 		ID:             node.ID,
 		RawURL:         node.RawURL,
@@ -956,6 +971,7 @@ func convertNode(node storage.Node) nodeDTO {
 		ClashConfig:    node.ClashConfig,
 		Enabled:        node.Enabled,
 		Tag:            node.Tag,
+		Tags:           tags,
 		OriginalServer: node.OriginalServer,
 		ProbeServer:    node.ProbeServer,
 		CreatedAt:      node.CreatedAt,

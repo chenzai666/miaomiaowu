@@ -52,6 +52,7 @@ interface ProxyGroup {
 interface Node {
   node_name: string
   tag?: string
+  tags?: string[]
   [key: string]: any
 }
 
@@ -131,7 +132,7 @@ export function MobileEditNodesDialog({
   open,
   onOpenChange,
   proxyGroups,
-  availableNodes,
+  availableNodes: _availableNodes,
   allNodes,
   onProxyGroupsChange,
   onSave,
@@ -201,28 +202,32 @@ export function MobileEditNodesDialog({
   const allTags = useMemo(() => {
     const tags = new Set<string>()
     allNodes.forEach(node => {
-      if (node.tag) {
-        tags.add(node.tag)
-      }
+      const nodeTags = node.tags?.length ? node.tags : (node.tag ? [node.tag] : [])
+      for (const t of nodeTags) tags.add(t)
     })
     return Array.from(tags).sort()
   }, [allNodes])
 
-  // 过滤可用节点
+  // 过滤可用节点：显示除当前代理组外的所有节点
   const filteredAvailableNodes = useMemo(() => {
-    return availableNodes.filter(nodeName => {
-      const node = allNodes.find(n => n.node_name === nodeName)
-      if (!node) return false
+    const currentGroup = currentEditingGroup ? proxyGroups.find(g => g.name === currentEditingGroup) : null
+    const currentProxies = new Set(currentGroup?.proxies || [])
 
-      // 搜索过滤
-      const matchesSearch = nodeName.toLowerCase().includes(searchQuery.toLowerCase())
-      if (!matchesSearch) return false
-
-      // 标签过滤
-      if (selectedTag === 'all') return true
-      return node.tag === selectedTag
-    })
-  }, [availableNodes, allNodes, searchQuery, selectedTag])
+    return allNodes
+      .filter(node => {
+        // 排除当前代理组已有的节点
+        if (currentProxies.has(node.node_name)) return false
+        // 搜索过滤
+        if (searchQuery && !node.node_name.toLowerCase().includes(searchQuery.toLowerCase())) return false
+        // 标签过滤
+        if (selectedTag !== 'all') {
+          const nodeTags = node.tags?.length ? node.tags : (node.tag ? [node.tag] : [])
+          if (!nodeTags.includes(selectedTag)) return false
+        }
+        return true
+      })
+      .map(n => n.node_name)
+  }, [allNodes, proxyGroups, currentEditingGroup, searchQuery, selectedTag])
 
   // 切换分组展开/折叠
   const toggleGroup = (groupName: string) => {
@@ -751,11 +756,11 @@ export function MobileEditNodesDialog({
                           />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate"><Twemoji>{nodeName}</Twemoji></p>
-                            {node?.tag && (
-                              <Badge variant="secondary" className="text-xs mt-1">
-                                {node.tag}
+                            {(node?.tags?.length ? node.tags : node?.tag ? [node.tag] : []).map(t => (
+                              <Badge key={t} variant="secondary" className="text-xs mt-1">
+                                {t}
                               </Badge>
-                            )}
+                            ))}
                           </div>
                         </div>
                       )

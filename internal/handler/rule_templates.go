@@ -4,16 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"miaomiaowu/internal/auth"
+	"miaomiaowu/internal/storage"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-type RuleTemplatesHandler struct{}
+type RuleTemplatesHandler struct {
+	repo *storage.TrafficRepository
+}
 
-func NewRuleTemplatesHandler() *RuleTemplatesHandler {
-	return &RuleTemplatesHandler{}
+func NewRuleTemplatesHandler(repo *storage.TrafficRepository) *RuleTemplatesHandler {
+	return &RuleTemplatesHandler{repo: repo}
 }
 
 func (h *RuleTemplatesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +154,12 @@ func (h *RuleTemplatesHandler) handleUpdateTemplate(w http.ResponseWriter, r *ht
 	if err := os.WriteFile(templatePath, []byte(payload.Content), 0644); err != nil {
 		http.Error(w, "Failed to save template", http.StatusInternalServerError)
 		return
+	}
+
+	// 异步刷新绑定了此模板的订阅
+	if h.repo != nil {
+		username := auth.UsernameFromContext(r.Context())
+		go RefreshSubscriptionsByTemplate(h.repo, username, templateName)
 	}
 
 	// Return success response

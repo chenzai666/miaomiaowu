@@ -406,12 +406,9 @@ func NewSubscriptionListHandler(repo *storage.TrafficRepository) http.Handler {
 			}
 		}
 
-		// Get user settings to check if short link is enabled
-		userSettings, err := repo.GetUserSettings(r.Context(), username)
-		enableShortLink := false
-		if err == nil {
-			enableShortLink = userSettings.EnableShortLink
-		}
+		// Get system config to check if short link is enabled (global setting)
+		systemConfig, err := repo.GetSystemConfig(r.Context())
+		enableShortLink := err == nil && systemConfig.EnableShortLink
 
 		// Get user short code only if short link is enabled
 		var userShortCode string
@@ -430,6 +427,7 @@ func NewSubscriptionListHandler(repo *storage.TrafficRepository) http.Handler {
 			Type            string     `json:"type"`
 			FileShortCode   string     `json:"file_short_code,omitempty"`
 			CustomShortCode string     `json:"custom_short_code,omitempty"`
+			RawOutput       bool       `json:"raw_output"`
 			ExpireAt        *time.Time `json:"expire_at,omitempty"`
 			UpdatedAt       time.Time  `json:"updated_at"`
 			LatestVersion   int64      `json:"latest_version,omitempty"`
@@ -459,6 +457,7 @@ func NewSubscriptionListHandler(repo *storage.TrafficRepository) http.Handler {
 				Type:            file.Type,
 				FileShortCode:   fileShortCode,
 				CustomShortCode: customShortCode,
+				RawOutput:       file.RawOutput,
 				ExpireAt:        file.ExpireAt,
 				UpdatedAt:       file.UpdatedAt,
 				LatestVersion:   latestVersion,

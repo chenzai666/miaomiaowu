@@ -433,6 +433,7 @@ func syncSingleExternalSubscription(ctx context.Context, client *http.Client, re
 			ClashConfig:  string(clashConfigBytes),
 			Enabled:      true,
 			Tag:          sub.Name, // Use external subscription name as tag
+		Tags:         []string{sub.Name},
 		}
 
 		nodesToUpdate = append(nodesToUpdate, node)

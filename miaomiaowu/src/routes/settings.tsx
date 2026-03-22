@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
@@ -134,6 +134,37 @@ function SettingsPage() {
     onError: (error) => {
       handleServerError(error)
       toast.error('重置短链接失败')
+    },
+  })
+
+  const { data: shortCodeData } = useQuery({
+    queryKey: ['user-custom-short-code'],
+    queryFn: async () => {
+      const response = await api.get('/api/user/custom-short-code')
+      return response.data as { custom_short_code: string }
+    },
+    enabled: Boolean(auth.accessToken),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const [shortCodeInput, setShortCodeInput] = useState('')
+  useEffect(() => {
+    if (shortCodeData?.custom_short_code !== undefined) {
+      setShortCodeInput(shortCodeData.custom_short_code)
+    }
+  }, [shortCodeData])
+
+  const updateShortCodeMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const response = await api.post('/api/user/custom-short-code', { custom_short_code: code.trim() })
+      return response.data
+    },
+    onSuccess: () => {
+      toast.success('自定义连接已更新')
+      queryClient.invalidateQueries({ queryKey: ['user-custom-short-code'] })
+    },
+    onError: (error) => {
+      handleServerError(error)
     },
   })
 
@@ -275,6 +306,31 @@ function SettingsPage() {
                     {updateProfileMutation.isPending ? '保存中…' : '保存变更'}
                   </Button>
                 </form>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>自定义订阅连接</CardTitle>
+                <CardDescription>设置后短链接中将使用自定义连接替代系统随机生成的部分。只允许字母和数字，留空则使用系统默认。</CardDescription>
+              </CardHeader>
+              <CardContent className='space-y-3'>
+                <div className='space-y-2'>
+                  <Label htmlFor='custom_short_code'>自定义连接</Label>
+                  <Input
+                    id='custom_short_code'
+                    placeholder='字母和数字'
+                    value={shortCodeInput}
+                    onChange={(e) => setShortCodeInput(e.target.value)}
+                  />
+                </div>
+                <Button
+                  className='w-full'
+                  disabled={updateShortCodeMutation.isPending}
+                  onClick={() => updateShortCodeMutation.mutate(shortCodeInput)}
+                >
+                  {updateShortCodeMutation.isPending ? '保存中…' : '保存'}
+                </Button>
               </CardContent>
             </Card>
           </div>

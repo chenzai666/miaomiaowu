@@ -52,6 +52,7 @@ interface ProxyGroup {
 interface Node {
   node_name: string
   tag?: string
+  tags?: string[]
   [key: string]: any
 }
 
@@ -955,8 +956,9 @@ export function EditNodesDialog({
   const uniqueTags = useMemo(() => {
     const tags = new Set<string>()
     allNodes.forEach(node => {
-      if (node.tag && node.tag.trim()) {
-        tags.add(node.tag.trim())
+      const nodeTags = node.tags?.length ? node.tags : (node.tag ? [node.tag] : [])
+      for (const t of nodeTags) {
+        if (t.trim()) tags.add(t.trim())
       }
     })
     return Array.from(tags).sort()
@@ -964,9 +966,9 @@ export function EditNodesDialog({
 
   // 创建节点名称到标签的映射
   const nodeTagMap = useMemo(() => {
-    const map = new Map<string, string>()
+    const map = new Map<string, string[]>()
     allNodes.forEach(node => {
-      map.set(node.node_name, node.tag || '')
+      map.set(node.node_name, node.tags?.length ? node.tags : (node.tag ? [node.tag] : []))
     })
     return map
   }, [allNodes])
@@ -995,8 +997,8 @@ export function EditNodesDialog({
     // 按标签筛选
     if (nodeTagFilter && nodeTagFilter !== 'all') {
       filtered = filtered.filter(nodeName => {
-        const tag = nodeTagMap.get(nodeName) || ''
-        return tag === nodeTagFilter
+        const tags = nodeTagMap.get(nodeName) || []
+        return tags.includes(nodeTagFilter)
       })
     }
 

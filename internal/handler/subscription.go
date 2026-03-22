@@ -158,6 +158,11 @@ func newSubscriptionHandler(summary *TrafficSummaryHandler, repo *storage.Traffi
 }
 
 func (s *subscriptionEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if bfp := GetBruteForceProtector(); bfp != nil && bfp.IsBlocked(GetClientIP(r), r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+
 	request, ok := s.authorizeRequest(w, r)
 	if !ok {
 		return
@@ -202,6 +207,9 @@ func (s *subscriptionEndpoint) authorizeRequest(w http.ResponseWriter, r *http.R
 	}
 
 	// 所有认证方式都失败，设置token失效标记
+	if bfp := GetBruteForceProtector(); bfp != nil {
+		bfp.RecordFailure(GetClientIP(r), r.URL.Path)
+	}
 	ctx := context.WithValue(r.Context(), TokenInvalidKey, true)
 	return r.WithContext(ctx), true
 }
@@ -237,6 +245,9 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		subscribeFile, err = h.repo.GetSubscribeFileByFilename(r.Context(), filename)
 		if err != nil {
 			if errors.Is(err, storage.ErrSubscribeFileNotFound) {
+				if bfp := GetBruteForceProtector(); bfp != nil {
+					bfp.RecordFailure(GetClientIP(r), r.URL.Path)
+				}
 				writeError(w, http.StatusNotFound, errors.New("not found"))
 				return
 			}
@@ -252,6 +263,9 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		link, err := h.resolveSubscription(r.Context(), legacyName)
 		if err != nil {
 			if errors.Is(err, storage.ErrSubscriptionNotFound) {
+				if bfp := GetBruteForceProtector(); bfp != nil {
+					bfp.RecordFailure(GetClientIP(r), r.URL.Path)
+				}
 				writeError(w, http.StatusNotFound, err)
 				return
 			}
@@ -305,8 +319,39 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// 非Clash配置：直接输出原始文件内容，跳过所有转换处理
+	if hasSubscribeFile && subscribeFile.RawOutput {
+		rawData, readErr := os.ReadFile(resolvedPath)
+		if readErr != nil {
+			if errors.Is(readErr, os.ErrNotExist) {
+				writeError(w, http.StatusNotFound, readErr)
+			} else {
+				writeError(w, http.StatusInternalServerError, readErr)
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("profile-update-interval", "24")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(rawData)
+
+		logger.Info("📥📥📥 [SUB_FETCH] 用户获取订阅（原始输出）",
+			"user", username, "filename", filename, "bytes", len(rawData),
+			"duration_ms", time.Since(requestStart).Milliseconds(),
+		)
+		clientIP := GetClientIP(r)
+		if silentMgr := GetSilentModeManager(); silentMgr != nil && username != "" {
+			silentMgr.RecordSubscriptionAccessWithIP(username, clientIP)
+		}
+		if bfp := GetBruteForceProtector(); bfp != nil {
+			bfp.RecordSuccess(clientIP)
+		}
+		return
+	}
+
 	// 模板生成逻辑：如果订阅绑定了 V3 模板，使用模板生成配置
 	var data []byte
+	fromTemplate := false
 	if hasSubscribeFile && subscribeFile.TemplateFilename != "" {
 		stepStart = time.Now()
 		templateData, err := h.generateFromTemplate(r.Context(), username, subscribeFile)
@@ -315,6 +360,7 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			// 回退到直接读取文件
 		} else {
 			data = templateData
+			fromTemplate = true
 			logger.Info("[⏱️ 耗时监测] 模板生成完成", "step", "template_generate", "duration_ms", time.Since(stepStart).Milliseconds(), "bytes", len(data))
 		}
 	}
@@ -335,11 +381,9 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		logger.Info("[⏱️ 耗时监测] 文件读取完成", "step", "file_read", "duration_ms", time.Since(stepStart).Milliseconds(), "bytes", len(data))
 	}
 
-	// MMW 同步
+	// MMW 同步（模板模式下跳过，模板处理已包含代理集合节点）
 	stepStart = time.Now()
-	// 同步 MMW 模式代理集合的节点到订阅文件
-	// 这样可以确保获取订阅时包含最新的代理集合节点
-	if h.repo != nil {
+	if h.repo != nil && !fromTemplate {
 		SyncMMWProxyProvidersToFile(h.repo, h.baseDir, cleanedName)
 		// 重新读取更新后的文件
 		updatedData, err := os.ReadFile(resolvedPath)
@@ -476,8 +520,8 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 							logger.Info("[Subscription] 查询数据库中的节点", "count", len(usedNodeNames))
 							nodes, err := h.repo.ListNodes(r.Context(), username)
 							if err == nil {
-								// 收集使用到的外部订阅名称（通过 tag 识别）
-								usedExternalSubs := make(map[string]bool)
+								// 收集使用到的外部订阅URL（通过 RawURL 识别）
+								usedExternalSubURLs := make(map[string]bool)
 
 								for _, node := range nodes {
 									// 检查节点是否在订阅文件中
@@ -493,26 +537,22 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 											logger.Info("[Subscription] 检测到探针节点绑定服务器", "node_name", node.NodeName, "probe_server", node.ProbeServer)
 										}
 
-										// 如果开启了流量同步，收集外部订阅节点
-										if settings.SyncTraffic {
-											// 如果 tag 不是默认值，说明是外部订阅节点
-											if node.Tag != "" && node.Tag != "手动输入" {
-												usedExternalSubs[node.Tag] = true
-												logger.Info("[Subscription] 节点来自外部订阅", "node_name", node.NodeName, "tag", node.Tag)
-											}
+										// 如果开启了流量同步，通过 RawURL 收集外部订阅节点
+										if settings.SyncTraffic && node.RawURL != "" {
+											usedExternalSubURLs[node.RawURL] = true
 										}
 									}
 								}
 
 								// 如果开启了流量同步且有使用到外部订阅的节点，汇总这些订阅的流量
-								if settings.SyncTraffic && len(usedExternalSubs) > 0 {
-									logger.Info("[Subscription] 用户启用流量同步，找到使用中的外部订阅", "user", username, "count", len(usedExternalSubs), "tags", getKeys(usedExternalSubs))
+								if settings.SyncTraffic && len(usedExternalSubURLs) > 0 {
+									logger.Info("[Subscription] 用户启用流量同步，找到使用中的外部订阅", "user", username, "count", len(usedExternalSubURLs))
 									externalSubs, err := h.repo.ListExternalSubscriptions(r.Context(), username)
 									if err == nil {
 										now := time.Now()
 										for _, sub := range externalSubs {
-											// 只汇总使用到的外部订阅
-											if usedExternalSubs[sub.Name] {
+											// 只汇总使用到的外部订阅（通过URL匹配）
+											if usedExternalSubURLs[sub.URL] {
 												// 如果有过期时间且已过期，则跳过
 												// 如果过期时间为空，表示长期订阅，不跳过
 												if sub.Expire != nil && sub.Expire.Before(now) {
@@ -714,16 +754,21 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 					}
 				}
 
-				// 重新排序 proxy-groups 中每个代理组的字段
+				// 重新排序 proxy-groups 中每个代理组的字段，并剥离 dialer-proxy-group（MMW 自定义字段，不输出到订阅响应）
 				for i := 0; i < len(rootMap.Content); i += 2 {
 					if rootMap.Content[i].Value == "proxy-groups" {
 						proxyGroupsNode := rootMap.Content[i+1]
 						if proxyGroupsNode.Kind == yaml.SequenceNode {
 							reorderProxyGroups(proxyGroupsNode)
+							stripDialerProxyGroup(proxyGroupsNode)
 						}
 						break
 					}
 				}
+
+				// 兼容旧链式代理配置：如果存在 "🌄 落地节点" 和 "🌠 中转节点" 代理组，
+				// 给落地节点组内的节点自动添加 dialer-proxy: 🌠 中转节点
+				injectLegacyDialerProxy(rootMap)
 
 				// 查找 rule-providers 的位置
 				ruleProvidersIdx := -1
@@ -813,8 +858,12 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	)
 
 	// 更新静默模式活跃时间
+	clientIP := GetClientIP(r)
 	if silentMgr := GetSilentModeManager(); silentMgr != nil && username != "" {
-		silentMgr.RecordSubscriptionAccessWithIP(username, getClientIP(r))
+		silentMgr.RecordSubscriptionAccessWithIP(username, clientIP)
+	}
+	if bfp := GetBruteForceProtector(); bfp != nil {
+		bfp.RecordSuccess(clientIP)
 	}
 
 	logger.Info("[⏱️ 耗时监测] 请求处理完成", "total_duration_ms", time.Since(requestStart).Milliseconds(), "username", username, "filename", filename)
@@ -902,40 +951,12 @@ func GetExternalSubscriptionsFromFile(ctx context.Context, data []byte, username
 				return usedURLs, fmt.Errorf("failed to list nodes: %w", err)
 			}
 
-			// 收集使用到的外部订阅标签（节点的 Tag 字段）
-			usedTags := make(map[string]bool)
-
-			// Find matching nodes and collect their raw_url and tags
+			// Find matching nodes and collect their raw_url
 			for _, node := range nodes {
 				if proxyNames[node.NodeName] {
-					// 如果节点有 RawURL，直接使用
 					if node.RawURL != "" {
 						usedURLs[node.RawURL] = true
 						logger.Info("[Subscription] 从节点找到外部订阅URL", "node_name", node.NodeName, "url", node.RawURL)
-					}
-					// 如果节点有 Tag（外部订阅名称），记录下来
-					if node.Tag != "" && node.Tag != "手动输入" {
-						usedTags[node.Tag] = true
-						logger.Info("[Subscription] 节点来自外部订阅", "node_name", node.NodeName, "tag", node.Tag)
-					}
-				}
-			}
-
-			// 妙妙屋模式：通过节点的 Tag（外部订阅名称）找到外部订阅URL
-			if len(usedTags) > 0 {
-				logger.Info("[Subscription] 发现使用外部订阅的节点", "tag_count", len(usedTags))
-
-				// 获取所有外部订阅
-				externalSubs, err := repo.ListExternalSubscriptions(ctx, username)
-				if err != nil {
-					logger.Info("[Subscription] 获取外部订阅列表失败", "error", err)
-				} else {
-					// 根据 Tag（外部订阅名称）找到对应的 URL
-					for _, sub := range externalSubs {
-						if usedTags[sub.Name] {
-							usedURLs[sub.URL] = true
-							logger.Info("[Subscription] 从节点Tag找到外部订阅URL", "tag", sub.Name, "url", sub.URL)
-						}
 					}
 				}
 			}
@@ -1641,6 +1662,110 @@ func reorderProxyGroupFields(groupNode *yaml.Node) {
 	groupNode.Content = newContent
 }
 
+// injectLegacyDialerProxy 兼容旧链式代理配置：
+// 当 proxy-groups 中同时存在 "🌄 落地节点" 和 "🌠 中转节点" 时，
+// 给落地节点组内的所有 proxy 自动添加 dialer-proxy: 🌠 中转节点（已有则跳过）
+func injectLegacyDialerProxy(rootMap *yaml.Node) {
+	const landingGroup = "🌄 落地节点"
+	const relayGroup = "🌠 中转节点"
+
+	// 查找 proxy-groups
+	var proxyGroupsNode *yaml.Node
+	for i := 0; i < len(rootMap.Content); i += 2 {
+		if rootMap.Content[i].Value == "proxy-groups" {
+			proxyGroupsNode = rootMap.Content[i+1]
+			break
+		}
+	}
+	if proxyGroupsNode == nil || proxyGroupsNode.Kind != yaml.SequenceNode {
+		return
+	}
+
+	// 收集落地节点组的 proxies 名称，同时确认中转节点组存在
+	hasRelay := false
+	landingProxies := make(map[string]bool)
+	for _, groupNode := range proxyGroupsNode.Content {
+		if groupNode.Kind != yaml.MappingNode {
+			continue
+		}
+		name := yamlMapGet(groupNode, "name")
+		if name == relayGroup {
+			hasRelay = true
+		}
+		if name == landingGroup {
+			for i := 0; i < len(groupNode.Content); i += 2 {
+				if groupNode.Content[i].Value == "proxies" && groupNode.Content[i+1].Kind == yaml.SequenceNode {
+					for _, pNode := range groupNode.Content[i+1].Content {
+						landingProxies[pNode.Value] = true
+					}
+				}
+			}
+		}
+	}
+	if !hasRelay || len(landingProxies) == 0 {
+		return
+	}
+
+	// 查找 proxies 节点，给命中的节点注入 dialer-proxy
+	for i := 0; i < len(rootMap.Content); i += 2 {
+		if rootMap.Content[i].Value != "proxies" {
+			continue
+		}
+		proxiesNode := rootMap.Content[i+1]
+		if proxiesNode.Kind != yaml.SequenceNode {
+			break
+		}
+		for _, proxyNode := range proxiesNode.Content {
+			if proxyNode.Kind != yaml.MappingNode {
+				continue
+			}
+			proxyName := yamlMapGet(proxyNode, "name")
+			if !landingProxies[proxyName] {
+				continue
+			}
+			// 已有 dialer-proxy 则跳过
+			if yamlMapGet(proxyNode, "dialer-proxy") != "" {
+				continue
+			}
+			proxyNode.Content = append(proxyNode.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "dialer-proxy"},
+				&yaml.Node{Kind: yaml.ScalarNode, Value: relayGroup},
+			)
+		}
+		break
+	}
+}
+
+// yamlMapGet 从 MappingNode 中读取指定 key 的字符串值
+func yamlMapGet(node *yaml.Node, key string) string {
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1].Value
+		}
+	}
+	return ""
+}
+
+// stripDialerProxyGroup 从 proxy-groups 中移除 dialer-proxy-group 字段（仅用于 API 输出）
+func stripDialerProxyGroup(proxyGroupsNode *yaml.Node) {
+	for _, groupNode := range proxyGroupsNode.Content {
+		if groupNode.Kind != yaml.MappingNode {
+			continue
+		}
+		newContent := make([]*yaml.Node, 0, len(groupNode.Content))
+		for i := 0; i < len(groupNode.Content); i += 2 {
+			if i+1 >= len(groupNode.Content) {
+				break
+			}
+			if groupNode.Content[i].Value == "dialer-proxy-group" {
+				continue
+			}
+			newContent = append(newContent, groupNode.Content[i], groupNode.Content[i+1])
+		}
+		groupNode.Content = newContent
+	}
+}
+
 // sortProxiesByNodeOrder 根据用户配置的节点顺序对 proxies 进行排序
 // nodeOrder 是节点 ID 的数组，proxiesNode 是 YAML 中的 proxies 序列节点
 func sortProxiesByNodeOrder(ctx context.Context, repo *storage.TrafficRepository, username string, proxiesNode *yaml.Node, nodeOrder []int64) error {
@@ -1767,17 +1892,34 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 	}
 	logger.Info("[模板生成] 读取模板文件", "template", subscribeFile.TemplateFilename, "bytes", len(templateContent))
 
-	// 2. 从节点表获取用户的所有代理节点
-	nodes, err := h.repo.ListNodes(ctx, username)
+	// 2. 从节点表获取代理节点（非管理员使用管理员的节点）
+	nodeOwner := username
+	if user, err := h.repo.GetUser(ctx, username); err == nil && user.Role != storage.RoleAdmin {
+		if adminName, err := h.repo.GetAdminUsername(ctx); err == nil {
+			nodeOwner = adminName
+		}
+	}
+	nodes, err := h.repo.ListNodes(ctx, nodeOwner)
 	if err != nil {
 		return nil, fmt.Errorf("获取节点列表失败: %w", err)
 	}
+
+	// 构建选中标签的 map 用于快速查找
+	selectedTagsMap := make(map[string]bool)
+	for _, tag := range subscribeFile.SelectedTags {
+		selectedTagsMap[tag] = true
+	}
+	hasTagFilter := len(selectedTagsMap) > 0
 
 	// 将节点转换为 proxies 格式（[]map[string]any）
 	var proxies []map[string]any
 	for _, node := range nodes {
 		if !node.Enabled {
 			continue // 跳过禁用的节点
+		}
+		// 标签过滤：只使用选中标签的节点
+		if hasTagFilter && !node.HasAnyTag(selectedTagsMap) {
+			continue
 		}
 		// ClashConfig 是 JSON 格式的字符串，需要解析
 		var proxyConfig map[string]any
@@ -1789,10 +1931,10 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 		proxyConfig["name"] = node.NodeName
 		proxies = append(proxies, proxyConfig)
 	}
-	logger.Info("[模板生成] 从节点表获取代理节点", "total", len(nodes), "enabled", len(proxies))
+	logger.Info("[模板生成] 从节点表获取代理节点", "total", len(nodes), "enabled", len(proxies), "tag_filter", hasTagFilter)
 
-	// 3. 从代理集合表获取用户的代理集合配置（用于 proxy-providers）
-	providerConfigs, err := h.repo.ListProxyProviderConfigs(ctx, username)
+	// 3. 从代理集合表获取代理集合配置（用于 proxy-providers）
+	providerConfigs, err := h.repo.ListProxyProviderConfigs(ctx, nodeOwner)
 	if err != nil {
 		logger.Info("[模板生成] 获取代理集合配置失败", "error", err)
 		// 不是致命错误，继续处理
@@ -1800,17 +1942,20 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 
 	// 构建 providers map：provider name -> proxy names
 	providers := make(map[string][]string)
+	providerTagSet := make(map[string]bool)
 	for _, config := range providerConfigs {
-		// 获取该代理集合下的所有节点名称
-		// 通过 tag 字段匹配：节点的 tag 等于代理集合的名称
-		var providerProxyNames []string
+		providerTagSet[config.Name] = true
+	}
+	if len(providerTagSet) > 0 {
 		for _, node := range nodes {
-			if node.Enabled && node.Tag == config.Name {
-				providerProxyNames = append(providerProxyNames, node.NodeName)
+			if !node.Enabled {
+				continue
 			}
-		}
-		if len(providerProxyNames) > 0 {
-			providers[config.Name] = providerProxyNames
+			for _, t := range node.Tags {
+				if providerTagSet[t] {
+					providers[t] = append(providers[t], node.NodeName)
+				}
+			}
 		}
 	}
 	logger.Info("[模板生成] 从代理集合表获取代理集合", "count", len(providerConfigs), "with_nodes", len(providers))

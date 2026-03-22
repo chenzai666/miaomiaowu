@@ -143,8 +143,8 @@ func main() {
 	mux.Handle("/api/admin/probe-config", auth.RequireAdmin(tokenStore, userRepo, handler.NewProbeConfigHandler(repo)))
 	mux.Handle("/api/admin/probe-sync", auth.RequireAdmin(tokenStore, userRepo, handler.NewProbeSyncHandler(repo)))
 	mux.Handle("/api/admin/rules/", auth.RequireAdmin(tokenStore, userRepo, http.StripPrefix("/api/admin/rules/", handler.NewRuleEditorHandler(subscribeDir, repo))))
-	mux.Handle("/api/admin/rule-templates", auth.RequireAdmin(tokenStore, userRepo, handler.NewRuleTemplatesHandler()))
-	mux.Handle("/api/admin/rule-templates/", auth.RequireAdmin(tokenStore, userRepo, handler.NewRuleTemplatesHandler()))
+	mux.Handle("/api/admin/rule-templates", auth.RequireAdmin(tokenStore, userRepo, handler.NewRuleTemplatesHandler(repo)))
+	mux.Handle("/api/admin/rule-templates/", auth.RequireAdmin(tokenStore, userRepo, handler.NewRuleTemplatesHandler(repo)))
 	mux.Handle("/api/admin/template-v3/", auth.RequireAdmin(tokenStore, userRepo, handler.NewTemplateV3Handler(repo)))
 	mux.Handle("/api/admin/nodes", auth.RequireAdmin(tokenStore, userRepo, handler.NewNodesHandler(repo, subscribeDir)))
 	mux.Handle("/api/admin/nodes/", auth.RequireAdmin(tokenStore, userRepo, handler.NewNodesHandler(repo, subscribeDir)))
@@ -199,6 +199,7 @@ func main() {
 
 	// Short link reset endpoint (authenticated)
 	mux.Handle("/api/user/short-link", auth.RequireToken(tokenStore, handler.NewShortLinkResetHandler(repo)))
+	mux.Handle("/api/user/custom-short-code", auth.RequireToken(tokenStore, handler.NewUserCustomShortCodeSelfHandler(repo)))
 
 	// Temporary subscription endpoints
 	mux.Handle("/api/admin/temp-subscription", auth.RequireAdmin(tokenStore, userRepo, handler.NewTempSubscriptionHandler()))
@@ -209,11 +210,24 @@ func main() {
 	// /t/{id} paths route to temporary subscription handler
 	// All other paths go to the web handler
 	shortLinkHandler := handler.NewShortLinkHandler(repo, subscriptionHandler)
+	bruteForceProtector := handler.NewBruteForceProtector()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.Trim(r.URL.Path, "/")
+		clientIP := handler.GetClientIP(r)
+
+		// 暴力探测封禁检查
+		if bruteForceProtector.IsBlocked(clientIP, r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
+
 		// Check if this is a temporary subscription access (starts with "t/" followed by 8 hex chars)
 		if strings.HasPrefix(path, "t/") && len(path) == 10 {
-			tempSubAccessHandler.ServeHTTP(w, r)
+			rec := &handler.StatusRecorder{ResponseWriter: w, StatusCode: 200}
+			tempSubAccessHandler.ServeHTTP(rec, r)
+			if rec.StatusCode == http.StatusNotFound || rec.StatusCode == http.StatusForbidden {
+				bruteForceProtector.RecordFailure(clientIP, r.URL.Path)
+			}
 			return
 		}
 		// 自定义短链接后, 订阅+用户最小为2个字符
@@ -222,6 +236,7 @@ func main() {
 			if shortLinkHandler.TryServe(w, r) {
 				return
 			}
+			bruteForceProtector.RecordFailure(clientIP, r.URL.Path)
 		}
 		// Otherwise, pass to web handler
 		web.Handler().ServeHTTP(w, r)

@@ -77,6 +77,7 @@ type ParsedNode = {
   clash_config: string
   enabled: boolean
   tag: string
+  tags: string[]
   original_server: string
   probe_server: string
   created_at: string
@@ -459,7 +460,15 @@ function NodesPage() {
   // 批量操作状态 - 从 localStorage 恢复选中状态
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(() => getStoredSelectedIds())
   const [batchTagDialogOpen, setBatchTagDialogOpen] = useState(false)
-  const [batchTag, setBatchTag] = useState<string>('')
+  const [batchTagMode, setBatchTagMode] = useState<'add' | 'rename' | 'delete'>('add')
+  const [batchTagInput, setBatchTagInput] = useState('')
+  const [batchTagSelectedTag, setBatchTagSelectedTag] = useState<string | null>(null)
+
+  // 单节点标签管理
+  const [tagManageDialogOpen, setTagManageDialogOpen] = useState(false)
+  const [tagManageNodeId, setTagManageNodeId] = useState<number | null>(null)
+  const [tagManageInput, setTagManageInput] = useState('')
+  const [tagManageSelectedTag, setTagManageSelectedTag] = useState<string | null>(null)
   const [batchRenameDialogOpen, setBatchRenameDialogOpen] = useState(false)
   const [batchRenameText, setBatchRenameText] = useState<string>('')
   const [findText, setFindText] = useState<string>('')
@@ -735,6 +744,7 @@ function NodesPage() {
         clash_config: updatedClashConfig,
         enabled: target.enabled,
         tag: target.tag,
+        tags: target.tags || [target.tag],
       })
       return response.data
     },
@@ -1175,6 +1185,7 @@ function NodesPage() {
         clash_config: n.clash ? JSON.stringify(cloneProxyWithName(n.clash, n.name)) : '',
         enabled: n.enabled,
         tag: tag,
+        tags: [tag],
       }))
 
       const response = await api.post('/api/admin/nodes/batch', { nodes: payload })
@@ -1261,12 +1272,51 @@ function NodesPage() {
     },
   })
 
-  // 批量更新节点标签
+  // 单节点标签更新
+  const updateNodeTagsMutation = useMutation({
+    mutationFn: async ({ nodeId, tags }: { nodeId: number; tags: string[] }) => {
+      const node = savedNodes.find(n => n.id === nodeId)
+      if (!node) throw new Error('节点未找到')
+      return api.put(`/api/admin/nodes/${nodeId}`, {
+        raw_url: node.raw_url,
+        node_name: node.node_name,
+        protocol: node.protocol,
+        parsed_config: node.parsed_config,
+        clash_config: node.clash_config,
+        enabled: node.enabled,
+        tag: tags[0] || '',
+        tags,
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nodes'] })
+      toast.success('标签已更新')
+      setTagManageSelectedTag(null)
+      setTagManageInput('')
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || '标签更新失败')
+    },
+  })
+
+  // 批量管理节点标签
   const batchUpdateTagMutation = useMutation({
-    mutationFn: async ({ nodeIds, tag }: { nodeIds: number[]; tag: string }) => {
+    mutationFn: async ({ nodeIds, action, tag, oldTag }: {
+      nodeIds: number[]; action: 'add' | 'rename' | 'delete'; tag: string; oldTag?: string
+    }) => {
       const promises = nodeIds.map((id) => {
         const node = savedNodes.find(n => n.id === id)
         if (!node) return Promise.resolve()
+
+        let newTags = [...(node.tags?.length ? node.tags : (node.tag ? [node.tag] : []))]
+        if (action === 'add') {
+          if (!newTags.includes(tag)) newTags.push(tag)
+        } else if (action === 'rename' && oldTag) {
+          newTags = newTags.map(t => t === oldTag ? tag : t)
+        } else if (action === 'delete') {
+          newTags = newTags.filter(t => t !== tag)
+        }
+        if (newTags.length === 0) newTags = ['手动输入']
 
         return api.put(`/api/admin/nodes/${id}`, {
           raw_url: node.raw_url,
@@ -1275,21 +1325,25 @@ function NodesPage() {
           parsed_config: node.parsed_config,
           clash_config: node.clash_config,
           enabled: node.enabled,
-          tag: tag,
+          tag: newTags[0],
+          tags: newTags,
         })
       })
       await Promise.all(promises)
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['nodes'] })
-      toast.success(`成功更新 ${variables.nodeIds.length} 个节点的标签`)
-      setBatchTagDialogOpen(false)
-      setSelectedNodeIds(new Set())
-      setBatchTag('')
-      setTagFilter('all') // 切换到全部标签
+      const actionText = variables.action === 'add' ? '添加' : variables.action === 'rename' ? '修改' : '删除'
+      toast.success(`成功${actionText} ${variables.nodeIds.length} 个节点的标签`)
+      setBatchTagInput('')
+      setBatchTagSelectedTag(null)
+      if (variables.action !== 'delete') {
+        setBatchTagDialogOpen(false)
+        setSelectedNodeIds(new Set())
+      }
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || '批量更新标签失败')
+      toast.error(error.response?.data?.error || '批量管理标签失败')
     },
   })
 
@@ -1401,6 +1455,7 @@ function NodesPage() {
             clash_config: updatedClashConfig,
             enabled: node.enabled,
             tag: node.tag,
+            tags: node.tags || [node.tag],
           })
 
           successCount++
@@ -1497,6 +1552,7 @@ function NodesPage() {
         clash_config: updatedClashConfig,
         enabled: node.enabled,
         tag: node.tag,
+        tags: node.tags || [node.tag],
       })
 
       queryClient.invalidateQueries({ queryKey: ['nodes'] })
@@ -1529,6 +1585,7 @@ function NodesPage() {
         clash_config: updatedClashConfig,
         enabled: node.enabled,
         tag: node.tag,
+        tags: node.tags || [node.tag],
       })
 
       queryClient.invalidateQueries({ queryKey: ['nodes'] })
@@ -1719,6 +1776,7 @@ function NodesPage() {
         clash_config: JSON.stringify(newClashConfig),
         enabled: true,
         tag: '链式代理',
+        tags: ['链式代理'],
         original_server: sourceNode.original_server,
         probe_server: sourceNode.probe_server || '',
       })
@@ -2289,7 +2347,9 @@ function NodesPage() {
 
     // 按标签筛选
     if (tagFilter !== 'all') {
-      nodes = nodes.filter(node => node.tag === tagFilter)
+      nodes = nodes.filter(node =>
+        node.dbNode?.tags?.includes(tagFilter) || node.tag === tagFilter
+      )
     }
 
     return nodes
@@ -2343,11 +2403,10 @@ function NodesPage() {
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = { all: displayNodes.length }
-    const tags = new Set<string>()
     displayNodes.forEach(node => {
-      if (node.tag) {
-        tags.add(node.tag)
-        counts[node.tag] = (counts[node.tag] || 0) + 1
+      const nodeTags = node.dbNode?.tags?.length ? node.dbNode.tags : (node.tag ? [node.tag] : [])
+      for (const t of nodeTags) {
+        counts[t] = (counts[t] || 0) + 1
       }
     })
     return counts
@@ -2398,11 +2457,11 @@ function NodesPage() {
       // 2. 按新的标签顺序分组节点
       const nodesByTag: Record<string, typeof savedDisplayNodes> = {}
       savedDisplayNodes.forEach(node => {
-        const tag = node.tag || ''
-        if (!nodesByTag[tag]) {
-          nodesByTag[tag] = []
+        const primaryTag = node.dbNode?.tags?.[0] || node.tag || ''
+        if (!nodesByTag[primaryTag]) {
+          nodesByTag[primaryTag] = []
         }
-        nodesByTag[tag].push(node)
+        nodesByTag[primaryTag].push(node)
       })
 
       // 3. 按新的标签顺序重建节点顺序
@@ -2437,8 +2496,9 @@ function NodesPage() {
   const allUniqueTags = useMemo(() => {
     const tags = new Set<string>()
     savedNodes.forEach(node => {
-      if (node.tag && node.tag.trim()) {
-        tags.add(node.tag.trim())
+      const nodeTags = node.tags?.length ? node.tags : (node.tag ? [node.tag] : [])
+      for (const t of nodeTags) {
+        if (t.trim()) tags.add(t.trim())
       }
     })
     return Array.from(tags).sort()
@@ -2720,7 +2780,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           size='sm'
                           onClick={() => setBatchTagDialogOpen(true)}
                         >
-                          修改标签 ({selectedNodeIds.size})
+                          管理标签 ({selectedNodeIds.size})
                         </Button>
                         <Button
                           variant='outline'
@@ -2915,7 +2975,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                 setTagFilter(tag)
                                 // 计算应该选中的节点
                                 const nodesToSelect = displayNodes
-                                  .filter(n => n.isSaved && n.dbId && n.dbNode?.tag === tag)
+                                  .filter(n => n.isSaved && n.dbId && n.dbNode?.tags?.includes(tag))
                                   .filter(n => selectedProtocol === 'all' || n.dbNode?.protocol?.toLowerCase() === selectedProtocol)
                                 const nodeIdsToSelect = new Set(nodesToSelect.map(n => n.dbId!))
 
@@ -3007,9 +3067,9 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           >
                             <CardContent className='p-3 space-y-2'>
                               {/* 头部：协议、节点名称、已保存标签 */}
-                              <div className='flex items-start justify-between gap-2'>
-                                <div className='flex-1 min-w-0'>
-                                  <div className='flex items-center gap-2 mb-1'>
+                              <div>
+                                <div className='flex items-center justify-between gap-2 mb-1'>
+                                  <div className='flex items-center gap-2'>
                                     {node.isSaved && (
                                       <DragHandle id={node.id} size='large' />
                                     )}
@@ -3048,46 +3108,6 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                   <Check className='size-4 text-green-600' />
                                 )}
                               </div>
-                              {/* 节点名称 */}
-                              {editingNode?.id === node.id ? (
-                                <div className='flex items-center gap-1' onClick={(e) => e.stopPropagation()}>
-                                  <Input
-                                    value={editingNode.value}
-                                    onChange={(event) => handleNameEditChange(event.target.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === 'Enter') {
-                                        event.preventDefault()
-                                        handleNameEditSubmit(node)
-                                      } else if (event.key === 'Escape') {
-                                        event.preventDefault()
-                                        handleNameEditCancel()
-                                      }
-                                    }}
-                                    className='h-7 flex-1 min-w-0'
-                                    autoFocus
-                                  />
-                                  <Button
-                                    variant='ghost'
-                                    size='icon'
-                                    className='size-7 text-emerald-600 shrink-0'
-                                    onClick={() => handleNameEditSubmit(node)}
-                                    disabled={node.isSaved ? isUpdatingNodeName : false}
-                                  >
-                                    <Check className='size-3.5' />
-                                  </Button>
-                                  <Button
-                                    variant='ghost'
-                                    size='icon'
-                                    className='size-7 text-muted-foreground shrink-0'
-                                    onClick={handleNameEditCancel}
-                                  >
-                                    <X className='size-3.5' />
-                                  </Button>
-                                </div>
-                              ) : (
-                                <div className='font-medium text-sm break-all line-clamp-2'><Twemoji>{node.name || '未知'}</Twemoji></div>
-                              )}
-                            </div>
                             {/* 编辑、交换和探针绑定按钮 */}
                             {editingNode?.id !== node.id && (
                               <div className='flex items-center gap-1 shrink-0' onClick={(e) => e.stopPropagation()}>
@@ -3236,6 +3256,46 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                               </div>
                             )}
                           </div>
+                              {/* 节点名称 */}
+                              {editingNode?.id === node.id ? (
+                                <div className='flex items-center gap-1' onClick={(e) => e.stopPropagation()}>
+                                  <Input
+                                    value={editingNode.value}
+                                    onChange={(event) => handleNameEditChange(event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter') {
+                                        event.preventDefault()
+                                        handleNameEditSubmit(node)
+                                      } else if (event.key === 'Escape') {
+                                        event.preventDefault()
+                                        handleNameEditCancel()
+                                      }
+                                    }}
+                                    className='h-7 flex-1 min-w-0'
+                                    autoFocus
+                                  />
+                                  <Button
+                                    variant='ghost'
+                                    size='icon'
+                                    className='size-7 text-emerald-600 shrink-0'
+                                    onClick={() => handleNameEditSubmit(node)}
+                                    disabled={node.isSaved ? isUpdatingNodeName : false}
+                                  >
+                                    <Check className='size-3.5' />
+                                  </Button>
+                                  <Button
+                                    variant='ghost'
+                                    size='icon'
+                                    className='size-7 text-muted-foreground shrink-0'
+                                    onClick={handleNameEditCancel}
+                                  >
+                                    <X className='size-3.5' />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className='font-medium text-sm truncate'><Twemoji>{node.name || '未知'}</Twemoji></div>
+                              )}
+                          </div>
 
                           {/* 服务器地址和标签 */}
                           <div className='space-y-1.5'>
@@ -3257,9 +3317,14 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                             )}
                             <div className='flex items-center gap-2 flex-wrap text-xs'>
                               <span className='text-muted-foreground shrink-0'>标签:</span>
-                              <Badge variant='secondary' className='text-xs'>
-                                {node.dbNode?.tag || node.tag || (currentTag === 'manual' ? manualTag.trim() || '手动输入' : currentTag === 'subscription' ? subscriptionTag.trim() || '订阅导入' : '未知')}
-                              </Badge>
+                              {(node.isSaved && node.dbNode?.tags?.length ? node.dbNode.tags : [node.dbNode?.tag || node.tag || '手动输入']).map(t => (
+                                <Badge key={t} variant='secondary' className='text-xs cursor-pointer hover:bg-primary/20 transition-colors' onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (node.isSaved && node.dbNode) {
+                                    setTagManageNodeId(node.dbNode.id); setTagManageSelectedTag(t); setTagManageInput(t); setTagManageDialogOpen(true)
+                                  }
+                                }}>{t}</Badge>
+                              ))}
                               {node.isSaved && node.dbNode?.probe_server && (
                                 <Badge variant='secondary' className='text-xs flex items-center gap-1'>
                                   <Activity className='size-3' />
@@ -3471,7 +3536,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           </Button>
                                         </div>
                                       ) : (
-                                        <div className='font-medium text-sm break-all line-clamp-2'><Twemoji>{node.name || '未知'}</Twemoji></div>
+                                        <div className='font-medium text-sm truncate'><Twemoji>{node.name || '未知'}</Twemoji></div>
                                       )}
                                     </div>
                                     {/* 编辑按钮 */}
@@ -3579,9 +3644,14 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                     )}
                                     <div className='flex items-center gap-2 flex-wrap text-xs'>
                                       <span className='text-muted-foreground shrink-0'>标签:</span>
-                                      <Badge variant='secondary' className='text-xs'>
-                                        {node.dbNode?.tag || node.tag || '手动输入'}
-                                      </Badge>
+                                      {(node.isSaved && node.dbNode?.tags?.length ? node.dbNode.tags : [node.dbNode?.tag || node.tag || '手动输入']).map(t => (
+                                        <Badge key={t} variant='secondary' className='text-xs cursor-pointer hover:bg-primary/20 transition-colors' onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (node.isSaved && node.dbNode) {
+                                            setTagManageNodeId(node.dbNode.id); setTagManageSelectedTag(t); setTagManageInput(t); setTagManageDialogOpen(true)
+                                          }
+                                        }}>{t}</Badge>
+                                      ))}
                                     </div>
                                   </div>
 
@@ -4029,9 +4099,14 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                             </TableCell>
                             <TableCell>
                               <div className='flex flex-wrap gap-1'>
-                                <Badge variant='secondary' className='text-xs max-w-[90px] truncate'>
-                                  {node.dbNode?.tag || node.tag || (currentTag === 'manual' ? manualTag.trim() || '手动输入' : currentTag === 'subscription' ? subscriptionTag.trim() || '订阅导入' : '未知')}
-                                </Badge>
+                                {(node.isSaved && node.dbNode?.tags?.length ? node.dbNode.tags : [node.dbNode?.tag || node.tag || '手动输入']).map(t => (
+                                  <Badge key={t} variant='secondary' className='text-xs max-w-[90px] truncate cursor-pointer hover:bg-primary/20 transition-colors' onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (node.isSaved && node.dbNode) {
+                                      setTagManageNodeId(node.dbNode.id); setTagManageSelectedTag(t); setTagManageInput(t); setTagManageDialogOpen(true)
+                                    }
+                                  }}>{t}</Badge>
+                                ))}
                                 {node.isSaved && node.dbNode?.probe_server && (
                                   <Badge variant='secondary' className='text-xs flex items-center gap-1'>
                                     <Activity className='size-3' />
@@ -4264,10 +4339,15 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                     )}
                                   </div>
                                   {/* 标签 */}
-                                  <div style={{ width: '100px' }} className='shrink-0 px-2'>
-                                    <Badge variant='secondary' className='text-xs truncate max-w-full'>
-                                      {node.dbNode?.tag || node.tag || '手动输入'}
-                                    </Badge>
+                                  <div style={{ width: '100px' }} className='shrink-0 px-2 flex flex-wrap gap-0.5'>
+                                    {(node.isSaved && node.dbNode?.tags?.length ? node.dbNode.tags : [node.dbNode?.tag || node.tag || '手动输入']).map(t => (
+                                      <Badge key={t} variant='secondary' className='text-xs truncate max-w-full cursor-pointer hover:bg-primary/20 transition-colors' onClick={(e) => {
+                                        e.stopPropagation()
+                                        if (node.isSaved && node.dbNode) {
+                                          setTagManageNodeId(node.dbNode.id); setTagManageSelectedTag(t); setTagManageInput(t); setTagManageDialogOpen(true)
+                                        }
+                                      }}>{t}</Badge>
+                                    ))}
                                   </div>
                                   {/* 配置按钮 */}
                                   <div style={{ width: '70px' }} className='shrink-0 text-center' onClick={(e) => e.stopPropagation()}>
@@ -4498,13 +4578,14 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                             </TableCell>
                             <TableCell>
                               <div className='flex flex-wrap gap-1'>
-                                <Badge
-                                  variant='secondary'
-                                  className='text-xs max-w-[120px] truncate'
-                                  title={node.dbNode?.tag || node.tag || (currentTag === 'manual' ? manualTag.trim() || '手动输入' : currentTag === 'subscription' ? subscriptionTag.trim() || '订阅导入' : '未知')}
-                                >
-                                  {node.dbNode?.tag || node.tag || (currentTag === 'manual' ? manualTag.trim() || '手动输入' : currentTag === 'subscription' ? subscriptionTag.trim() || '订阅导入' : '未知')}
-                                </Badge>
+                                {(node.isSaved && node.dbNode?.tags?.length ? node.dbNode.tags : [node.dbNode?.tag || node.tag || '手动输入']).map(t => (
+                                  <Badge key={t} variant='secondary' className='text-xs max-w-[120px] truncate cursor-pointer hover:bg-primary/20 transition-colors' title={t} onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (node.isSaved && node.dbNode) {
+                                      setTagManageNodeId(node.dbNode.id); setTagManageSelectedTag(t); setTagManageInput(t); setTagManageDialogOpen(true)
+                                    }
+                                  }}>{t}</Badge>
+                                ))}
                                 {node.isSaved && node.dbNode?.probe_server && (
                                   <Badge variant='secondary' className='text-xs flex items-center gap-1'>
                                     <Activity className='size-3' />
@@ -5026,10 +5107,15 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                     </div>
                                   </div>
                                   {/* 标签 */}
-                                  <div style={{ width: '120px' }} className='shrink-0 px-2'>
-                                    <Badge variant='secondary' className='text-xs truncate max-w-full'>
-                                      {node.dbNode?.tag || node.tag || '手动输入'}
-                                    </Badge>
+                                  <div style={{ width: '120px' }} className='shrink-0 px-2 flex flex-wrap gap-0.5'>
+                                    {(node.isSaved && node.dbNode?.tags?.length ? node.dbNode.tags : [node.dbNode?.tag || node.tag || '手动输入']).map(t => (
+                                      <Badge key={t} variant='secondary' className='text-xs truncate max-w-full cursor-pointer hover:bg-primary/20 transition-colors' onClick={(e) => {
+                                        e.stopPropagation()
+                                        if (node.isSaved && node.dbNode) {
+                                          setTagManageNodeId(node.dbNode.id); setTagManageSelectedTag(t); setTagManageInput(t); setTagManageDialogOpen(true)
+                                        }
+                                      }}>{t}</Badge>
+                                    ))}
                                   </div>
                                   {/* 服务器地址 */}
                                   <div style={{ width: '280px', maxWidth: '280px' }} className='shrink-0 px-2' onClick={(e) => e.stopPropagation()}>
@@ -5405,27 +5491,25 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
           setExchangeFilterText('') // 关闭对话框时清空筛选
         }
       }}>
-        <DialogContent className='max-w-2xl max-h-[80vh] overflow-y-auto'>
+        <DialogContent className='max-w-2xl flex flex-col max-h-[80vh]'>
           <DialogHeader>
             <DialogTitle>选择中转节点</DialogTitle>
             <DialogDescription>
               选择目标节点与 "{sourceNodeForExchange?.node_name}" 创建链式代理
             </DialogDescription>
           </DialogHeader>
-          <div className='space-y-4 py-4'>
-            {/* 筛选输入框 */}
-            <div className='space-y-2'>
-              <Input
-                placeholder='搜索节点名称、协议或标签...'
-                value={exchangeFilterText}
-                onChange={(e) => setExchangeFilterText(e.target.value)}
-                className='text-sm'
-              />
-              <p className='text-xs text-muted-foreground'>
-                自动排除链式代理节点
-              </p>
-            </div>
-
+          <div className='space-y-2 shrink-0'>
+            <Input
+              placeholder='搜索节点名称、协议或标签...'
+              value={exchangeFilterText}
+              onChange={(e) => setExchangeFilterText(e.target.value)}
+              className='text-sm'
+            />
+            <p className='text-xs text-muted-foreground'>
+              自动排除链式代理节点
+            </p>
+          </div>
+          <div className='overflow-y-auto min-h-0 py-2'>
             {(() => {
               // 筛选逻辑
               const filteredNodes = savedNodes
@@ -5437,7 +5521,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                   return (
                     node.node_name.toLowerCase().includes(searchText) ||
                     node.protocol.toLowerCase().includes(searchText) ||
-                    (node.tag && node.tag.toLowerCase().includes(searchText))
+                    (node.tags?.some(t => t.toLowerCase().includes(searchText)) || (node.tag && node.tag.toLowerCase().includes(searchText)))
                   )
                 })
 
@@ -5465,11 +5549,11 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                             {node.protocol} - {node.original_server}
                           </span>
                         </div>
-                        {node.tag && (
-                          <Badge variant='secondary' className='text-xs'>
-                            {node.tag}
+                        {(node.tags?.length ? node.tags : node.tag ? [node.tag] : []).map(t => (
+                          <Badge key={t} variant='secondary' className='text-xs'>
+                            {t}
                           </Badge>
-                        )}
+                        ))}
                       </div>
                     </Button>
                   ))}
@@ -5484,71 +5568,165 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
         </DialogContent>
       </Dialog>
 
-      {/* 批量修改标签对话框 */}
-      <Dialog open={batchTagDialogOpen} onOpenChange={setBatchTagDialogOpen}>
-        <DialogContent className='max-w-md'>
+      {/* 单节点标签管理对话框 */}
+      <Dialog open={tagManageDialogOpen} onOpenChange={(open) => {
+        setTagManageDialogOpen(open)
+        if (!open) { setTagManageInput(''); setTagManageSelectedTag(null); setTagManageNodeId(null) }
+      }}>
+        <DialogContent className='max-w-sm'>
           <DialogHeader>
-            <DialogTitle>批量修改标签</DialogTitle>
-            <DialogDescription>
-              将为选中的 {selectedNodeIds.size} 个节点修改标签
-            </DialogDescription>
+            <DialogTitle>管理标签</DialogTitle>
+            <DialogDescription>点击标签可编辑，或添加新标签</DialogDescription>
           </DialogHeader>
           <div className='space-y-4 py-4'>
-            {allUniqueTags.length > 0 && (
+            {(() => {
+              const node = tagManageNodeId ? savedNodes.find(n => n.id === tagManageNodeId) : null
+              const nodeTags = node?.tags?.length ? node.tags : (node?.tag ? [node.tag] : [])
+              return (
+                <>
+                  <div className='flex flex-wrap gap-2'>
+                    {nodeTags.map(tag => (
+                      <Badge
+                        key={tag}
+                        variant={tagManageSelectedTag === tag ? 'default' : 'outline'}
+                        className='cursor-pointer transition-colors'
+                        onClick={() => { setTagManageSelectedTag(tag); setTagManageInput(tag) }}
+                      >
+                        {tag}
+                      </Badge>
+                    ))}
+                    {nodeTags.length === 0 && <span className='text-sm text-muted-foreground'>暂无标签</span>}
+                  </div>
+                  <Input
+                    placeholder='输入标签名称'
+                    value={tagManageInput}
+                    onChange={(e) => setTagManageInput(e.target.value)}
+                  />
+                  <div className='flex justify-end gap-2'>
+                    {tagManageSelectedTag && (
+                      <>
+                        <Button variant='destructive' size='sm' disabled={updateNodeTagsMutation.isPending} onClick={() => {
+                          if (!tagManageNodeId) return
+                          const newTags = nodeTags.filter(t => t !== tagManageSelectedTag)
+                          updateNodeTagsMutation.mutate({ nodeId: tagManageNodeId, tags: newTags.length > 0 ? newTags : ['手动输入'] })
+                        }}>删除</Button>
+                        <Button size='sm' disabled={updateNodeTagsMutation.isPending || !tagManageInput.trim() || tagManageInput.trim() === tagManageSelectedTag} onClick={() => {
+                          if (!tagManageNodeId) return
+                          const newTags = nodeTags.map(t => t === tagManageSelectedTag ? tagManageInput.trim() : t)
+                          updateNodeTagsMutation.mutate({ nodeId: tagManageNodeId, tags: newTags })
+                        }}>保存</Button>
+                      </>
+                    )}
+                    <Button size='sm' variant='outline' disabled={updateNodeTagsMutation.isPending || !tagManageInput.trim() || nodeTags.includes(tagManageInput.trim())} onClick={() => {
+                      if (!tagManageNodeId) return
+                      updateNodeTagsMutation.mutate({ nodeId: tagManageNodeId, tags: [...nodeTags, tagManageInput.trim()] })
+                    }}>添加</Button>
+                  </div>
+                </>
+              )
+            })()}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 批量管理标签对话框 */}
+      <Dialog open={batchTagDialogOpen} onOpenChange={(open) => {
+        setBatchTagDialogOpen(open)
+        if (!open) { setBatchTagInput(''); setBatchTagSelectedTag(null); setBatchTagMode('add') }
+      }}>
+        <DialogContent className='max-w-md'>
+          <DialogHeader>
+            <DialogTitle>批量管理标签</DialogTitle>
+            <DialogDescription>为选中的 {selectedNodeIds.size} 个节点管理标签</DialogDescription>
+          </DialogHeader>
+          <div className='space-y-4 py-4'>
+            {/* 操作模式选择 */}
+            <div className='flex gap-2'>
+              {(['add', 'rename', 'delete'] as const).map(mode => (
+                <Button key={mode} variant={batchTagMode === mode ? 'default' : 'outline'} size='sm' onClick={() => {
+                  setBatchTagMode(mode); setBatchTagSelectedTag(null); setBatchTagInput('')
+                }}>
+                  {mode === 'add' ? '添加标签' : mode === 'rename' ? '修改标签' : '删除标签'}
+                </Button>
+              ))}
+            </div>
+
+            {/* 修改/删除模式：显示选中节点的已有标签 */}
+            {batchTagMode !== 'add' && (() => {
+              const tags = new Set<string>()
+              for (const id of selectedNodeIds) {
+                const node = savedNodes.find(n => n.id === id)
+                ;(node?.tags?.length ? node.tags : (node?.tag ? [node.tag] : [])).forEach(t => tags.add(t))
+              }
+              const batchTags = [...tags].sort()
+              return batchTags.length > 0 ? (
+                <div className='space-y-2'>
+                  <Label className='text-sm font-medium'>选择要{batchTagMode === 'rename' ? '修改' : '删除'}的标签</Label>
+                  <div className='flex flex-wrap gap-2'>
+                    {batchTags.map(tag => (
+                      <Badge key={tag} variant={batchTagSelectedTag === tag ? 'default' : 'outline'} className='cursor-pointer transition-colors' onClick={() => {
+                        setBatchTagSelectedTag(tag)
+                        if (batchTagMode === 'rename') setBatchTagInput(tag)
+                        if (batchTagMode === 'delete') setBatchTagInput(tag)
+                      }}>
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ) : <p className='text-sm text-muted-foreground'>选中节点暂无标签</p>
+            })()}
+
+            {/* 添加/修改模式：输入框 */}
+            {batchTagMode !== 'delete' && (
               <div className='space-y-2'>
-                <Label className='text-sm font-medium'>快速选择标签</Label>
+                <Label className='text-sm font-medium'>{batchTagMode === 'add' ? '新标签名称' : '新标签名称'}</Label>
+                <Input
+                  placeholder={batchTagMode === 'add' ? '输入新标签' : '输入新标签名'}
+                  value={batchTagInput}
+                  onChange={(e) => setBatchTagInput(e.target.value)}
+                />
+              </div>
+            )}
+
+            {/* 添加模式：快速选择 */}
+            {batchTagMode === 'add' && allUniqueTags.length > 0 && (
+              <div className='space-y-2'>
+                <Label className='text-sm font-medium'>快速选择</Label>
                 <div className='flex flex-wrap gap-2'>
-                  {allUniqueTags.map((tag) => (
-                    <Badge
-                      key={tag}
-                      variant='outline'
-                      className='cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors'
-                      onClick={() => setBatchTag(tag)}
-                    >
+                  {allUniqueTags.map(tag => (
+                    <Badge key={tag} variant='outline' className='cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors' onClick={() => setBatchTagInput(tag)}>
                       {tag}
                     </Badge>
                   ))}
                 </div>
               </div>
             )}
-            <div className='space-y-2'>
-              <Label htmlFor='batch-tag-input' className='text-sm font-medium'>
-                标签名称
-              </Label>
-              <Input
-                id='batch-tag-input'
-                placeholder='输入标签名称'
-                value={batchTag}
-                onChange={(e) => setBatchTag(e.target.value)}
-                className='font-mono text-sm'
-              />
-            </div>
+
+            {/* 操作按钮 */}
             <div className='flex justify-end gap-2 pt-2'>
-              <Button
-                variant='outline'
-                onClick={() => {
-                  setBatchTagDialogOpen(false)
-                  setBatchTag('')
-                }}
-                disabled={batchUpdateTagMutation.isPending}
-              >
+              <Button variant='outline' onClick={() => setBatchTagDialogOpen(false)} disabled={batchUpdateTagMutation.isPending}>
                 取消
               </Button>
               <Button
+                variant={batchTagMode === 'delete' ? 'destructive' : 'default'}
+                disabled={batchUpdateTagMutation.isPending || (
+                  batchTagMode === 'add' ? !batchTagInput.trim() :
+                  batchTagMode === 'rename' ? (!batchTagSelectedTag || !batchTagInput.trim() || batchTagInput.trim() === batchTagSelectedTag) :
+                  !batchTagSelectedTag
+                )}
                 onClick={() => {
-                  if (!batchTag.trim()) {
-                    toast.error('请输入标签名称')
-                    return
-                  }
                   const nodeIds = Array.from(selectedNodeIds)
-                  batchUpdateTagMutation.mutate({
-                    nodeIds,
-                    tag: batchTag.trim(),
-                  })
+                  if (batchTagMode === 'add') {
+                    batchUpdateTagMutation.mutate({ nodeIds, action: 'add', tag: batchTagInput.trim() })
+                  } else if (batchTagMode === 'rename' && batchTagSelectedTag) {
+                    batchUpdateTagMutation.mutate({ nodeIds, action: 'rename', tag: batchTagInput.trim(), oldTag: batchTagSelectedTag })
+                  } else if (batchTagMode === 'delete' && batchTagSelectedTag) {
+                    batchUpdateTagMutation.mutate({ nodeIds, action: 'delete', tag: batchTagSelectedTag })
+                  }
                 }}
-                disabled={batchUpdateTagMutation.isPending || !batchTag.trim()}
               >
-                {batchUpdateTagMutation.isPending ? '保存中...' : '保存'}
+                {batchUpdateTagMutation.isPending ? '处理中...' : batchTagMode === 'add' ? '添加' : batchTagMode === 'rename' ? '保存' : '删除'}
               </Button>
             </div>
           </div>
@@ -5761,11 +5939,11 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                             {node.protocol.toUpperCase()}
                           </Badge>
                           <span className='truncate'>{node.node_name}</span>
-                          {node.tag && (
-                            <Badge variant='secondary' className='shrink-0'>
-                              {node.tag}
+                          {(node.tags?.length ? node.tags : node.tag ? [node.tag] : []).map(t => (
+                            <Badge key={t} variant='secondary' className='shrink-0'>
+                              {t}
                             </Badge>
-                          )}
+                          ))}
                         </div>
                         <span className={`text-xs shrink-0 ml-2 ${nodeIndex === 0 ? 'text-green-600' : 'text-red-600'}`}>
                           {nodeIndex === 0 ? '保留' : '删除'}

@@ -871,3 +871,96 @@ proxy-groups:
 
 	t.Logf("Test passed: %d landing proxies with dialer-proxy, %d relay proxies without", landingProxiesWithDialer, relayProxiesWithoutDialer)
 }
+
+// TestTemplateV3Processor_ProviderGroupDialerProxy tests that when a proxy group
+// references a provider-created proxy group AND has dialer-proxy-group set,
+// the nodes inside the referenced provider group also get dialer-proxy.
+func TestTemplateV3Processor_ProviderGroupDialerProxy(t *testing.T) {
+	templateContent := `
+proxy-groups:
+  - name: 🚀 节点选择
+    type: select
+    proxies:
+      - 🌠 中转节点
+      - 🌄 落地节点
+      - DIRECT
+  - name: 🌠 中转节点
+    type: select
+    include-all-proxies: true
+    filter: 中转
+  - name: 🌄 落地节点
+    type: select
+    proxies:
+      - MyProvider
+    dialer-proxy-group: 🌠 中转节点
+  - name: MyProvider
+    type: url-test
+    use:
+      - MyProvider
+`
+
+	proxies := []map[string]any{
+		{"name": "中转-HK-01", "type": "vmess", "server": "relay1.example.com", "port": 443},
+		{"name": "中转-SG-01", "type": "trojan", "server": "relay2.example.com", "port": 443},
+		{"name": "prov-node1", "type": "vmess", "server": "prov1.example.com", "port": 443},
+		{"name": "prov-node2", "type": "trojan", "server": "prov2.example.com", "port": 443},
+	}
+
+	providers := map[string][]string{
+		"MyProvider": {"prov-node1", "prov-node2"},
+	}
+
+	processor := NewTemplateV3Processor(nil, providers)
+	result, err := processor.ProcessTemplate(templateContent, proxies)
+	if err != nil {
+		t.Fatalf("ProcessTemplate failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("Result is not valid YAML: %v", err)
+	}
+
+	topProxies, ok := parsed["proxies"].([]any)
+	if !ok {
+		t.Fatal("proxies not found in result")
+	}
+
+	providerNodesWithDialer := 0
+	relayNodesWithoutDialer := 0
+
+	for _, p := range topProxies {
+		proxy, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := proxy["name"].(string)
+		dialerProxy, hasDialer := proxy["dialer-proxy"].(string)
+		t.Logf("Proxy %q: dialer-proxy=%v", name, dialerProxy)
+
+		if name == "prov-node1" || name == "prov-node2" {
+			if !hasDialer || dialerProxy != "🌠 中转节点" {
+				t.Errorf("Provider node %q should have dialer-proxy: 🌠 中转节点, got: %v", name, dialerProxy)
+			} else {
+				providerNodesWithDialer++
+			}
+		}
+
+		if name == "中转-HK-01" || name == "中转-SG-01" {
+			if hasDialer {
+				t.Errorf("Relay node %q should NOT have dialer-proxy, got: %v", name, dialerProxy)
+			} else {
+				relayNodesWithoutDialer++
+			}
+		}
+	}
+
+	if providerNodesWithDialer != 2 {
+		t.Errorf("Expected 2 provider nodes with dialer-proxy, got %d", providerNodesWithDialer)
+	}
+	if relayNodesWithoutDialer != 2 {
+		t.Errorf("Expected 2 relay nodes without dialer-proxy, got %d", relayNodesWithoutDialer)
+	}
+
+	t.Logf("Test passed: %d provider nodes with dialer-proxy, %d relay nodes without", providerNodesWithDialer, relayNodesWithoutDialer)
+}

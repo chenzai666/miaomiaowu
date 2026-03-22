@@ -21,7 +21,7 @@ func (r *TrafficRepository) ListSubscribeFiles(ctx context.Context) ([]Subscribe
 		return nil, errors.New("traffic repository not initialized")
 	}
 
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, created_at, updated_at FROM subscribe_files ORDER BY created_at DESC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, COALESCE(raw_output, 0), COALESCE(sort_order, 0), created_at, updated_at FROM subscribe_files ORDER BY sort_order ASC, created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list subscribe files: %w", err)
 	}
@@ -31,12 +31,14 @@ func (r *TrafficRepository) ListSubscribeFiles(ctx context.Context) ([]Subscribe
 	for rows.Next() {
 		var file SubscribeFile
 		var autoSync int
+		var rawOutput int
 		var expireAt sql.NullTime
 		var selectedTagsJSON string
-		if err := rows.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &file.CreatedAt, &file.UpdatedAt); err != nil {
+		if err := rows.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &rawOutput, &file.SortOrder, &file.CreatedAt, &file.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan subscribe file: %w", err)
 		}
 		file.AutoSyncCustomRules = autoSync != 0
+		file.RawOutput = rawOutput != 0
 		if expireAt.Valid {
 			file.ExpireAt = &expireAt.Time
 		}
@@ -67,17 +69,19 @@ func (r *TrafficRepository) GetSubscribeFileByID(ctx context.Context, id int64) 
 		return file, errors.New("subscribe file id is required")
 	}
 
-	row := r.db.QueryRowContext(ctx, `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, created_at, updated_at FROM subscribe_files WHERE id = ? LIMIT 1`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, COALESCE(raw_output, 0), COALESCE(sort_order, 0), created_at, updated_at FROM subscribe_files WHERE id = ? LIMIT 1`, id)
 	var autoSync int
+	var rawOutput int
 	var expireAt sql.NullTime
 	var selectedTagsJSON string
-	if err := row.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &file.CreatedAt, &file.UpdatedAt); err != nil {
+	if err := row.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &rawOutput, &file.SortOrder, &file.CreatedAt, &file.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return file, ErrSubscribeFileNotFound
 		}
 		return file, fmt.Errorf("get subscribe file: %w", err)
 	}
 	file.AutoSyncCustomRules = autoSync != 0
+	file.RawOutput = rawOutput != 0
 	if expireAt.Valid {
 		file.ExpireAt = &expireAt.Time
 	}
@@ -103,17 +107,19 @@ func (r *TrafficRepository) GetSubscribeFileByName(ctx context.Context, name str
 		return file, errors.New("subscribe file name is required")
 	}
 
-	row := r.db.QueryRowContext(ctx, `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, created_at, updated_at FROM subscribe_files WHERE name = ? LIMIT 1`, name)
+	row := r.db.QueryRowContext(ctx, `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, COALESCE(raw_output, 0), COALESCE(sort_order, 0), created_at, updated_at FROM subscribe_files WHERE name = ? LIMIT 1`, name)
 	var autoSync int
+	var rawOutput int
 	var expireAt sql.NullTime
 	var selectedTagsJSON string
-	if err := row.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &file.CreatedAt, &file.UpdatedAt); err != nil {
+	if err := row.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &rawOutput, &file.SortOrder, &file.CreatedAt, &file.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return file, ErrSubscribeFileNotFound
 		}
 		return file, fmt.Errorf("get subscribe file by name: %w", err)
 	}
 	file.AutoSyncCustomRules = autoSync != 0
+	file.RawOutput = rawOutput != 0
 	if expireAt.Valid {
 		file.ExpireAt = &expireAt.Time
 	}
@@ -139,17 +145,19 @@ func (r *TrafficRepository) GetSubscribeFileByFilename(ctx context.Context, file
 		return file, errors.New("subscribe file filename is required")
 	}
 
-	row := r.db.QueryRowContext(ctx, `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, created_at, updated_at FROM subscribe_files WHERE filename = ? LIMIT 1`, filename)
+	row := r.db.QueryRowContext(ctx, `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, COALESCE(raw_output, 0), COALESCE(sort_order, 0), created_at, updated_at FROM subscribe_files WHERE filename = ? LIMIT 1`, filename)
 	var autoSync int
+	var rawOutput int
 	var expireAt sql.NullTime
 	var selectedTagsJSON string
-	if err := row.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &file.CreatedAt, &file.UpdatedAt); err != nil {
+	if err := row.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &rawOutput, &file.SortOrder, &file.CreatedAt, &file.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return file, ErrSubscribeFileNotFound
 		}
 		return file, fmt.Errorf("get subscribe file by filename: %w", err)
 	}
 	file.AutoSyncCustomRules = autoSync != 0
+	file.RawOutput = rawOutput != 0
 	if expireAt.Valid {
 		file.ExpireAt = &expireAt.Time
 	}
@@ -210,8 +218,12 @@ func (r *TrafficRepository) CreateSubscribeFile(ctx context.Context, file Subscr
 
 		// Default auto_sync_custom_rules to 1 (enabled) for new subscribe files
 		// template_filename 默认为空，创建时不绑定模板
-		res, err := r.db.ExecContext(ctx, `INSERT INTO subscribe_files (name, description, url, type, filename, file_short_code, auto_sync_custom_rules, template_filename, selected_tags, expire_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
-			file.Name, file.Description, file.URL, file.Type, file.Filename, newFileShortCode, file.TemplateFilename, selectedTagsJSON, expireAt)
+		var rawOutputInt int
+		if file.RawOutput {
+			rawOutputInt = 1
+		}
+		res, err := r.db.ExecContext(ctx, `INSERT INTO subscribe_files (name, description, url, type, filename, file_short_code, auto_sync_custom_rules, template_filename, selected_tags, expire_at, raw_output) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+			file.Name, file.Description, file.URL, file.Type, file.Filename, newFileShortCode, file.TemplateFilename, selectedTagsJSON, expireAt, rawOutputInt)
 		if err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "unique") && strings.Contains(strings.ToLower(err.Error()), "file_short_code") {
 				// File short code collision, retry
@@ -279,8 +291,12 @@ func (r *TrafficRepository) UpdateSubscribeFile(ctx context.Context, file Subscr
 			selectedTagsJSON = string(tagsBytes)
 		}
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE subscribe_files SET name = ?, description = ?, url = ?, type = ?, filename = ?, auto_sync_custom_rules = ?, template_filename = ?, selected_tags = ?, custom_short_code = ?, expire_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		file.Name, file.Description, file.URL, file.Type, file.Filename, autoSyncInt, file.TemplateFilename, selectedTagsJSON, file.CustomShortCode, expireAt, file.ID)
+	var rawOutputInt int
+	if file.RawOutput {
+		rawOutputInt = 1
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE subscribe_files SET name = ?, description = ?, url = ?, type = ?, filename = ?, auto_sync_custom_rules = ?, template_filename = ?, selected_tags = ?, custom_short_code = ?, expire_at = ?, raw_output = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		file.Name, file.Description, file.URL, file.Type, file.Filename, autoSyncInt, file.TemplateFilename, selectedTagsJSON, file.CustomShortCode, expireAt, rawOutputInt, file.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return SubscribeFile{}, ErrSubscribeFileExists
@@ -297,6 +313,32 @@ func (r *TrafficRepository) UpdateSubscribeFile(ctx context.Context, file Subscr
 	}
 
 	return r.GetSubscribeFileByID(ctx, file.ID)
+}
+
+// ReorderSubscribeFiles updates sort_order for subscribe files based on the given ID order.
+func (r *TrafficRepository) ReorderSubscribeFiles(ctx context.Context, ids []int64) error {
+	if r == nil || r.db == nil {
+		return errors.New("traffic repository not initialized")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin reorder tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `UPDATE subscribe_files SET sort_order = ? WHERE id = ?`)
+	if err != nil {
+		return fmt.Errorf("prepare reorder stmt: %w", err)
+	}
+	defer stmt.Close()
+
+	for i, id := range ids {
+		if _, err := stmt.ExecContext(ctx, i, id); err != nil {
+			return fmt.Errorf("update sort_order for id %d: %w", id, err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // DeleteSubscribeFile removes a subscribe file record.
@@ -355,10 +397,10 @@ func (r *TrafficRepository) GetSubscribeFilesByTemplate(ctx context.Context, tem
 		return nil, errors.New("template filename is required")
 	}
 
-	const query = `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, created_at, updated_at
+	const query = `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, COALESCE(raw_output, 0), COALESCE(sort_order, 0), created_at, updated_at
 		FROM subscribe_files
 		WHERE template_filename = ?
-		ORDER BY created_at DESC`
+		ORDER BY sort_order ASC, created_at DESC`
 
 	rows, err := r.db.QueryContext(ctx, query, templateFilename)
 	if err != nil {
@@ -370,12 +412,14 @@ func (r *TrafficRepository) GetSubscribeFilesByTemplate(ctx context.Context, tem
 	for rows.Next() {
 		var file SubscribeFile
 		var autoSync int
+		var rawOutput int
 		var expireAt sql.NullTime
 		var selectedTagsJSON string
-		if err := rows.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &file.CreatedAt, &file.UpdatedAt); err != nil {
+		if err := rows.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &rawOutput, &file.SortOrder, &file.CreatedAt, &file.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan subscribe file: %w", err)
 		}
 		file.AutoSyncCustomRules = autoSync != 0
+		file.RawOutput = rawOutput != 0
 		if expireAt.Valid {
 			file.ExpireAt = &expireAt.Time
 		}
@@ -400,10 +444,10 @@ func (r *TrafficRepository) GetSubscribeFilesWithTemplate(ctx context.Context) (
 		return nil, errors.New("traffic repository not initialized")
 	}
 
-	const query = `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, created_at, updated_at
+	const query = `SELECT id, name, COALESCE(description, ''), url, type, filename, COALESCE(file_short_code, ''), COALESCE(custom_short_code, ''), COALESCE(auto_sync_custom_rules, 0), COALESCE(template_filename, ''), COALESCE(selected_tags, '[]'), expire_at, COALESCE(raw_output, 0), COALESCE(sort_order, 0), created_at, updated_at
 		FROM subscribe_files
 		WHERE template_filename IS NOT NULL AND template_filename != ''
-		ORDER BY created_at DESC`
+		ORDER BY sort_order ASC, created_at DESC`
 
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
@@ -415,12 +459,14 @@ func (r *TrafficRepository) GetSubscribeFilesWithTemplate(ctx context.Context) (
 	for rows.Next() {
 		var file SubscribeFile
 		var autoSync int
+		var rawOutput int
 		var expireAt sql.NullTime
 		var selectedTagsJSON string
-		if err := rows.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &file.CreatedAt, &file.UpdatedAt); err != nil {
+		if err := rows.Scan(&file.ID, &file.Name, &file.Description, &file.URL, &file.Type, &file.Filename, &file.FileShortCode, &file.CustomShortCode, &autoSync, &file.TemplateFilename, &selectedTagsJSON, &expireAt, &rawOutput, &file.SortOrder, &file.CreatedAt, &file.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan subscribe file: %w", err)
 		}
 		file.AutoSyncCustomRules = autoSync != 0
+		file.RawOutput = rawOutput != 0
 		if expireAt.Valid {
 			file.ExpireAt = &expireAt.Time
 		}

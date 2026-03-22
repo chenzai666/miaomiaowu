@@ -102,7 +102,7 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 				SyncTraffic:             false,
 				EnableProbeBinding:      false,
 				CustomRulesEnabled:      true, // 自定义规则始终启用
-				EnableShortLink:         false,
+				EnableShortLink:         systemConfig.EnableShortLink,
 				TemplateVersion:         "v2", // 默认使用v2模板系统
 				EnableProxyProvider:     false,
 				NodeOrder:               []int64{},
@@ -133,7 +133,7 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 		SyncTraffic:             settings.SyncTraffic,
 		EnableProbeBinding:      settings.EnableProbeBinding,
 		CustomRulesEnabled:      true, // 自定义规则始终启用
-		EnableShortLink:         settings.EnableShortLink,
+		EnableShortLink:         systemConfig.EnableShortLink,
 		TemplateVersion:         settings.TemplateVersion,
 		EnableProxyProvider:     settings.EnableProxyProvider,
 		NodeOrder:               settings.NodeOrder,
@@ -212,7 +212,6 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 		SyncTraffic:         payload.SyncTraffic,
 		EnableProbeBinding:  payload.EnableProbeBinding,
 		CustomRulesEnabled:  true, // 自定义规则始终启用
-		EnableShortLink:     payload.EnableShortLink,
 		TemplateVersion:     templateVersion,
 		EnableProxyProvider: payload.EnableProxyProvider,
 		NodeOrder:           payload.NodeOrder,
@@ -245,6 +244,7 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 		EnableSubInfoNodes:      payload.EnableSubInfoNodes,
 		SubInfoExpirePrefix:     subInfoExpirePrefix,
 		SubInfoTrafficPrefix:    subInfoTrafficPrefix,
+		EnableShortLink:         payload.EnableShortLink,
 	}
 	if err := repo.UpdateSystemConfig(r.Context(), systemConfig); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("update system config: %w", err))
@@ -260,7 +260,7 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 		SyncTraffic:             settings.SyncTraffic,
 		EnableProbeBinding:      settings.EnableProbeBinding,
 		CustomRulesEnabled:      true, // 自定义规则始终启用
-		EnableShortLink:         settings.EnableShortLink,
+		EnableShortLink:         payload.EnableShortLink,
 		TemplateVersion:         settings.TemplateVersion,
 		EnableProxyProvider:     settings.EnableProxyProvider,
 		NodeOrder:               settings.NodeOrder,
