@@ -65,6 +65,8 @@ export interface ProxyGroupV3Config {
   'interface-name'?: string
   'routing-mark'?: number
   'dialer-proxy-group'?: string
+  hidden?: boolean
+  icon?: string
 }
 
 // Parsed template structure
@@ -103,6 +105,8 @@ export interface ProxyGroupFormState {
   interval: number
   tolerance: number
   dialerProxyGroup: string
+  hidden: boolean
+  icon: string
 }
 
 // Convert comma-separated keywords to regex pattern
@@ -173,6 +177,8 @@ export function createDefaultFormState(name = '新代理组'): ProxyGroupFormSta
     interval: 300,
     tolerance: 50,
     dialerProxyGroup: '',
+    hidden: false,
+    icon: '',
   }
 }
 
@@ -265,6 +271,9 @@ export function formStateToConfig(state: ProxyGroupFormState): ProxyGroupV3Confi
     config['dialer-proxy-group'] = state.dialerProxyGroup
   }
 
+  if (state.hidden) config.hidden = true
+  if (state.icon) config.icon = state.icon
+
   return config
 }
 
@@ -328,6 +337,8 @@ export function configToFormState(config: ProxyGroupV3Config, allGroupNames: str
     interval: config.interval || 300,
     tolerance: config.tolerance || 50,
     dialerProxyGroup: config['dialer-proxy-group'] || '',
+    hidden: config.hidden || false,
+    icon: config.icon || '',
   }
 
   // Add default markers if not present but should be shown

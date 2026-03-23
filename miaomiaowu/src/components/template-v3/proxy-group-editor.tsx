@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ChevronDown, ChevronUp, Trash2, GripVertical, Link2, Variable } from 'lucide-react'
+import { ChevronDown, ChevronUp, Trash2, GripVertical, Link2, Variable, EyeOff } from 'lucide-react'
 import { useState } from 'react'
 import { KeywordFilterInput } from './keyword-filter-input'
 import { ProxyTypeSelect } from './proxy-type-select'
@@ -70,15 +70,26 @@ export function ProxyGroupEditor({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div className="border rounded-lg">
+      <div className={`border rounded-lg ${group.hidden ? 'opacity-60' : ''}`}>
         <CollapsibleTrigger asChild>
           <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-accent/50">
             <div className="flex items-center gap-3">
               <GripVertical className="h-4 w-4 text-muted-foreground" />
+              {group.icon && (
+                /^https?:\/\//.test(group.icon)
+                  ? <img src={group.icon} alt="" className="h-5 w-5 object-contain" />
+                  : <span className="text-base leading-none">{group.icon}</span>
+              )}
               <span className="font-medium">{group.name}</span>
               <Badge variant="outline" className="text-xs">
                 {GROUP_TYPE_LABELS[group.type]}
               </Badge>
+              {group.hidden && (
+                <Badge variant="secondary" className="text-xs gap-1">
+                  <EyeOff className="h-3 w-3" />
+                  已隐藏
+                </Badge>
+              )}
               {group.filterKeywords && (
                 <Badge variant="secondary" className="text-xs">有过滤</Badge>
               )}
@@ -363,6 +374,25 @@ export function ProxyGroupEditor({
                 )}
               </div>
             )}
+
+            {/* Row 7: Icon and Hidden */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>图标 (icon)</Label>
+                <Input
+                  value={group.icon}
+                  onChange={(e) => updateField('icon', e.target.value)}
+                  placeholder="URL 或 emoji"
+                />
+              </div>
+              <div className="flex items-center gap-2 sm:pt-8">
+                <Switch
+                  checked={group.hidden}
+                  onCheckedChange={(v) => updateField('hidden', v)}
+                />
+                <span className="text-sm">隐藏此组 (hidden)</span>
+              </div>
+            </div>
           </div>
         </CollapsibleContent>
       </div>
