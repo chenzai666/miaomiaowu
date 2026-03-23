@@ -830,6 +830,15 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
           }
         }
 
+        // 解析 trojan reality 参数
+        if (queryParams.security === 'reality') {
+          node.tls = true
+          node.pbk = queryParams.pbk || ''
+          node.sid = queryParams.sid || ''
+          node.spx = queryParams.spx || ''
+          node['public-key'] = queryParams.pbk || ''
+        }
+
         // 其他参数
         if (queryParams.alpn) {
           node.alpn = queryParams.alpn.split(',')
