@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -76,6 +76,7 @@ function TemplatesV3Page() {
   const [proxyGroups, setProxyGroups] = useState<ProxyGroupFormState[]>([])
   const [editorTab, setEditorTab] = useState<'visual' | 'yaml'>('visual')
   const [isDirty, setIsDirty] = useState(false)
+  const isInitLoadRef = useRef(false)
   const [enableRegionProxyGroups, setEnableRegionProxyGroups] = useState(false)
   const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({})
 
@@ -232,6 +233,7 @@ function TemplatesV3Page() {
   // Load template content when data is fetched
   useEffect(() => {
     if (templateData && isEditorOpen) {
+      isInitLoadRef.current = true
       setTemplateContent(templateData)
       const vars = extractTemplateVariables(templateData)
       setTemplateVariables(vars)
@@ -241,6 +243,8 @@ function TemplatesV3Page() {
       const hasRegionProxyGroups = groups.some(g => g.includeRegionProxyGroups)
       setEnableRegionProxyGroups(hasRegionProxyGroups)
       setIsDirty(false)
+      // Allow ProxyGroupSelect's ensureMarkers setTimeout to finish before enabling dirty tracking
+      setTimeout(() => { isInitLoadRef.current = false }, 50)
     }
   }, [templateData, isEditorOpen])
 
@@ -402,7 +406,9 @@ function TemplatesV3Page() {
     const newGroups = [...proxyGroups]
     newGroups[index] = group
     setProxyGroups(newGroups)
-    setIsDirty(true)
+    if (!isInitLoadRef.current) {
+      setIsDirty(true)
+    }
   }
 
   // Handle proxy group delete
