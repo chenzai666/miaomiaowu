@@ -1,8 +1,9 @@
 package substore
 
 import (
-	"regexp"
 	"strings"
+
+	"miaomiaowu/internal/logger"
 
 	"gopkg.in/yaml.v3"
 )
@@ -124,6 +125,22 @@ type TemplateV3Processor struct {
 	providers         map[string][]string // Provider name -> proxy names
 	regionGroupsAdded bool                // Whether region proxy groups have been added
 	regionGroupNames  []string            // Names of region proxy groups
+	variables         map[string]string   // 模板自定义变量（非标准顶级键）
+}
+
+// Clash/mihomo 标准顶级键（不视为自定义变量）
+var standardTopLevelKeys = map[string]bool{
+	"port": true, "socks-port": true, "redir-port": true, "tproxy-port": true,
+	"mixed-port": true, "allow-lan": true, "bind-address": true, "mode": true,
+	"log-level": true, "external-controller": true, "external-ui": true,
+	"ipv6": true, "dns": true, "proxies": true, "proxy-groups": true,
+	"proxy-providers": true, "rules": true, "rule-providers": true,
+	"hosts": true, "profile": true, "tun": true, "sniffer": true,
+	"authentication": true, "unified-delay": true, "tcp-concurrent": true,
+	"find-process-mode": true, "global-client-fingerprint": true,
+	"keep-alive-interval": true, "geodata-mode": true, "geo-auto-update": true,
+	"geo-update-interval": true, "geox-url": true,
+	"add-region-proxy-groups": true, // MMW 自定义字段
 }
 
 // NewTemplateV3Processor creates a new v3 template processor
@@ -134,7 +151,38 @@ func NewTemplateV3Processor(proxies []ProxyNode, providers map[string][]string) 
 		proxyGroups:       []string{},
 		regionGroupsAdded: false,
 		regionGroupNames:  GetRegionProxyGroupNames(),
+		variables:         make(map[string]string),
 	}
+}
+
+// ExtractTemplateVariables 从模板 YAML 中提取自定义变量（非 Clash 标准顶级键的标量值）
+func ExtractTemplateVariables(content string) map[string]string {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return nil
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
+		return nil
+	}
+	rootMap := root.Content[0]
+	if rootMap.Kind != yaml.MappingNode {
+		return nil
+	}
+	return collectVariables(rootMap)
+}
+
+// collectVariables 从 YAML 根映射中收集自定义变量（非标准键且值为标量字符串）
+func collectVariables(rootMap *yaml.Node) map[string]string {
+	vars := make(map[string]string)
+	for i := 0; i < len(rootMap.Content)-1; i += 2 {
+		key := rootMap.Content[i].Value
+		val := rootMap.Content[i+1]
+		// 仅收集非标准键且值为标量字符串的条目
+		if !standardTopLevelKeys[key] && val.Kind == yaml.ScalarNode && val.Tag == "!!str" {
+			vars[key] = val.Value
+		}
+	}
+	return vars
 }
 
 // ProcessTemplate processes a v3 template and expands proxy groups
@@ -154,6 +202,14 @@ func (p *TemplateV3Processor) ProcessTemplate(templateContent string, proxies []
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
 		rootMap := root.Content[0]
 		if rootMap.Kind == yaml.MappingNode {
+			// 收集模板自定义变量（非标准顶级键的标量值）
+			p.variables = collectVariables(rootMap)
+			if len(p.variables) > 0 {
+				for name, value := range p.variables {
+					logger.Info("[模板变量] 发现自定义变量", "name", name, "value", value)
+				}
+			}
+
 			var proxyGroupsIndex int = -1
 			var addRegionProxyGroups bool = false
 
@@ -207,6 +263,11 @@ func (p *TemplateV3Processor) ProcessTemplate(templateContent string, proxies []
 
 			// Remove add-region-proxy-groups from output
 			p.removeGlobalConfig(rootMap, "add-region-proxy-groups")
+
+			// 移除自定义变量键（不输出到最终 YAML）
+			for name := range p.variables {
+				p.removeGlobalConfig(rootMap, name)
+			}
 		}
 	}
 
@@ -496,8 +557,18 @@ func (p *TemplateV3Processor) parseProxyGroup(groupNode *yaml.Node) ProxyGroupV3
 			group.IncludeRegionProxyGroups = valueNode.Value == "true"
 		case "filter":
 			group.Filter = valueNode.Value
+			// 解析变量引用：filter 值如果是自定义变量名，替换为变量值
+			if resolved, ok := p.variables[group.Filter]; ok {
+				logger.Info("[模板变量] 代理组 filter 引用变量已解析", "group", group.Name, "variable", group.Filter, "resolved", resolved)
+				group.Filter = resolved
+			}
 		case "exclude-filter":
 			group.ExcludeFilter = valueNode.Value
+			// 解析变量引用
+			if resolved, ok := p.variables[group.ExcludeFilter]; ok {
+				logger.Info("[模板变量] 代理组 exclude-filter 引用变量已解析", "group", group.Name, "variable", group.ExcludeFilter, "resolved", resolved)
+				group.ExcludeFilter = resolved
+			}
 		case "exclude-type":
 			group.ExcludeType = valueNode.Value
 		case "url":
@@ -592,10 +663,19 @@ func (p *TemplateV3Processor) calculateProxies(group ProxyGroupV3) []string {
 func (p *TemplateV3Processor) calculateProxyNodes(group ProxyGroupV3) []string {
 	var nodes []string
 
-	// Check if explicit include option is set (not counting filter as include)
-	hasExplicitInclude := group.IncludeAll || group.IncludeAllProxies || group.IncludeType != ""
+	// 检查 proxies 列表中是否包含 __PROXY_NODES__ 占位符，等同于 include-all-proxies
+	hasNodesMarker := false
+	for _, proxy := range group.Proxies {
+		if proxy == ProxyNodesMarker {
+			hasNodesMarker = true
+			break
+		}
+	}
 
-	if group.IncludeAll || group.IncludeAllProxies {
+	// Check if explicit include option is set (not counting filter as include)
+	hasExplicitInclude := group.IncludeAll || group.IncludeAllProxies || group.IncludeType != "" || hasNodesMarker
+
+	if group.IncludeAll || group.IncludeAllProxies || hasNodesMarker {
 		for _, proxy := range p.allProxies {
 			nodes = append(nodes, proxy.Name)
 		}
@@ -658,7 +738,7 @@ func applyFilterPreservingGroups(proxies []string, filterPattern string, proxyGr
 			if pattern == "" {
 				continue
 			}
-			matched, err := regexp.MatchString(pattern, proxyName)
+			matched, err := matchCompatibleRegex(pattern, proxyName)
 			if err == nil && matched {
 				result = append(result, proxyName)
 				break
@@ -816,7 +896,7 @@ func applyFilter(proxies []string, filterPattern string) []string {
 			if pattern == "" {
 				continue
 			}
-			matched, err := regexp.MatchString(pattern, proxyName)
+			matched, err := matchCompatibleRegex(pattern, proxyName)
 			if err == nil && matched {
 				result = append(result, proxyName)
 				break
@@ -838,7 +918,7 @@ func applyExcludeFilter(proxies []string, excludePattern string) []string {
 			if pattern == "" {
 				continue
 			}
-			matched, err := regexp.MatchString(pattern, proxyName)
+			matched, err := matchCompatibleRegex(pattern, proxyName)
 			if err == nil && matched {
 				excluded = true
 				break

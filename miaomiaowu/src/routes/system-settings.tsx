@@ -639,7 +639,7 @@ function SystemSettingsPage() {
                   <Input
                     id='proxy-groups-source-url'
                     value={proxyGroupsSourceUrl}
-                    placeholder='https://example.com/proxy-groups.json'
+                    placeholder='https://raw.githubusercontent.com/iluobei/miaomiaowu/refs/heads/main/proxy_groups/proxy_groups.json'
                     disabled={loadingConfig || updateConfigMutation.isPending}
                     onChange={(e) => setProxyGroupsSourceUrl(e.target.value)}
                     onBlur={() => {

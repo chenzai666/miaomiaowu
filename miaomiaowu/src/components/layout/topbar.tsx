@@ -263,7 +263,7 @@ export function Topbar() {
         </div>
 
         <div className='flex items-center gap-2 sm:gap-3 pl-2 sm:pl-0'>
-          <a
+          {/* <a
             href='https://t.me/miaomiaowux'
             target='_blank'
             rel='noopener noreferrer'
@@ -276,7 +276,7 @@ export function Topbar() {
               <span className='animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75'></span>
               <span className='relative inline-flex rounded-full h-3 w-3 bg-primary'></span>
             </span>
-          </a>
+          </a> */}
           <ThemeSwitch />
           <UserMenu />
         </div>

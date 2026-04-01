@@ -21,6 +21,32 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultNodeNameFilterPattern = "剩余|流量|到期|订阅|时间|重置"
+
+func applyNodeNameFilterToProxies(proxies []any, filterRegex *regexp.Regexp, filterPattern string) ([]any, int) {
+	if filterRegex == nil || len(proxies) == 0 {
+		return proxies, 0
+	}
+
+	filteredProxies := make([]any, 0, len(proxies))
+	filteredCount := 0
+
+	for _, proxy := range proxies {
+		if proxyMap, ok := proxy.(map[string]any); ok {
+			if proxyName, ok := proxyMap["name"].(string); ok {
+				if filterRegex.MatchString(proxyName) {
+					filteredCount++
+					logger.Info("[外部订阅同步] 过滤节点", "name", proxyName, "pattern", filterPattern)
+					continue
+				}
+			}
+		}
+		filteredProxies = append(filteredProxies, proxy)
+	}
+
+	return filteredProxies, filteredCount
+}
+
 // syncExternalSubscriptionsManual is for manual sync triggered by user - syncs ALL external subscriptions regardless of ForceSyncExternal setting
 func syncExternalSubscriptionsManual(ctx context.Context, repo *storage.TrafficRepository, subscribeDir, username string) error {
 	if repo == nil || username == "" {
@@ -36,6 +62,7 @@ func syncExternalSubscriptionsManual(ctx context.Context, repo *storage.TrafficR
 		userSettings.MatchRule = "node_name"
 		userSettings.SyncScope = "saved_only"
 		userSettings.KeepNodeName = true
+		userSettings.NodeNameFilter = defaultNodeNameFilterPattern
 	}
 
 	matchRuleDesc := map[string]string{
@@ -117,6 +144,7 @@ func syncExternalSubscriptions(ctx context.Context, repo *storage.TrafficReposit
 		userSettings.SyncScope = "saved_only"
 		userSettings.KeepNodeName = true
 		userSettings.ForceSyncExternal = false
+		userSettings.NodeNameFilter = defaultNodeNameFilterPattern
 	}
 
 	matchRuleDesc := map[string]string{
@@ -369,25 +397,13 @@ func syncSingleExternalSubscription(ctx context.Context, client *http.Client, re
 
 	// Apply node name filter if configured
 	nodeNameFilter := strings.TrimSpace(settings.NodeNameFilter)
+	var filterRegex *regexp.Regexp
 	if nodeNameFilter != "" {
-		filterRegex, err := regexp.Compile(nodeNameFilter)
+		filterRegex, err = regexp.Compile(nodeNameFilter)
 		if err != nil {
 			logger.Info("[外部订阅同步] 节点名称过滤正则表达式无效，跳过过滤", "pattern", nodeNameFilter, "error", err)
 		} else {
-			filteredProxies := make([]any, 0, len(proxies))
-			filteredCount := 0
-			for _, proxy := range proxies {
-				if proxyMap, ok := proxy.(map[string]any); ok {
-					if proxyName, ok := proxyMap["name"].(string); ok {
-						if filterRegex.MatchString(proxyName) {
-							filteredCount++
-							logger.Info("[外部订阅同步] 过滤节点", "name", proxyName, "pattern", nodeNameFilter)
-							continue
-						}
-					}
-				}
-				filteredProxies = append(filteredProxies, proxy)
-			}
+			filteredProxies, filteredCount := applyNodeNameFilterToProxies(proxies, filterRegex, nodeNameFilter)
 			if filteredCount > 0 {
 				logger.Info("[外部订阅同步] 节点过滤完成", "filtered_count", filteredCount, "remaining_count", len(filteredProxies))
 			}
@@ -433,7 +449,7 @@ func syncSingleExternalSubscription(ctx context.Context, client *http.Client, re
 			ClashConfig:  string(clashConfigBytes),
 			Enabled:      true,
 			Tag:          sub.Name, // Use external subscription name as tag
-		Tags:         []string{sub.Name},
+			Tags:         []string{sub.Name},
 		}
 
 		nodesToUpdate = append(nodesToUpdate, node)
@@ -454,6 +470,32 @@ func syncSingleExternalSubscription(ctx context.Context, client *http.Client, re
 	}
 
 	logger.Info("[外部订阅同步] 数据库中已有节点", "count", len(existingNodes))
+
+	// Cleanup previously synced nodes from this subscription that match current name filter.
+	// This keeps DB state consistent with filtering rules even when those nodes were synced before.
+	if filterRegex != nil {
+		remainingNodes := make([]storage.Node, 0, len(existingNodes))
+		removedByFilterCount := 0
+
+		for _, existing := range existingNodes {
+			if existing.RawURL == sub.URL && filterRegex.MatchString(existing.NodeName) {
+				if err := repo.DeleteNodeForSync(ctx, existing.ID, username); err != nil {
+					logger.Info("[外部订阅同步] 删除已过滤历史节点失败", "node_name", existing.NodeName, "id", existing.ID, "error", err)
+					remainingNodes = append(remainingNodes, existing)
+					continue
+				}
+				removedByFilterCount++
+				logger.Info("[外部订阅同步] 删除已过滤历史节点", "node_name", existing.NodeName, "id", existing.ID)
+				continue
+			}
+			remainingNodes = append(remainingNodes, existing)
+		}
+
+		if removedByFilterCount > 0 {
+			logger.Info("[外部订阅同步] 清理历史过滤节点完成", "removed_count", removedByFilterCount)
+		}
+		existingNodes = remainingNodes
+	}
 
 	// Sync nodes to database (replace nodes based on match rule)
 	syncedCount := 0
@@ -483,7 +525,11 @@ func syncSingleExternalSubscription(ctx context.Context, client *http.Client, re
 				for i := range existingNodes {
 					var existingClashConfig map[string]any
 					if err := json.Unmarshal([]byte(existingNodes[i].ClashConfig), &existingClashConfig); err == nil {
+						// 使用解析IP前的域名匹配
 						existingServer, _ := existingClashConfig["server"].(string)
+						if existingNodes[i].OriginalServer != "" {
+							existingServer = existingNodes[i].OriginalServer
+						}
 						existingPort := existingClashConfig["port"]
 						existingType, _ := existingClashConfig["type"].(string)
 
@@ -506,7 +552,11 @@ func syncSingleExternalSubscription(ctx context.Context, client *http.Client, re
 				for i := range existingNodes {
 					var existingClashConfig map[string]any
 					if err := json.Unmarshal([]byte(existingNodes[i].ClashConfig), &existingClashConfig); err == nil {
+						// 优先使用原始域名匹配（IP 解析前的地址）
 						existingServer, _ := existingClashConfig["server"].(string)
+						if existingNodes[i].OriginalServer != "" {
+							existingServer = existingNodes[i].OriginalServer
+						}
 						existingPort := existingClashConfig["port"]
 
 						// Compare server:port
@@ -813,6 +863,7 @@ func (h *SyncSingleExternalSubscriptionHandler) ServeHTTP(w http.ResponseWriter,
 		userSettings.MatchRule = "node_name"
 		userSettings.SyncScope = "saved_only"
 		userSettings.KeepNodeName = true
+		userSettings.NodeNameFilter = defaultNodeNameFilterPattern
 	}
 
 	// Get the specific subscription

@@ -206,6 +206,11 @@ func (h *TemplateV3Handler) handlePreviewWithTags(w http.ResponseWriter, r *http
 		return
 	}
 
+	// 按用户配置的节点顺序排序
+	if settings, err := h.repo.GetUserSettings(r.Context(), username); err == nil && len(settings.NodeOrder) > 0 {
+		sortNodesByNodeOrder(nodes, settings.NodeOrder)
+	}
+
 	// Filter nodes by selected tags and enabled status
 	var proxies []map[string]any
 	selectedTagsSet := make(map[string]bool)
@@ -583,8 +588,9 @@ func (h *TemplateV3Handler) handleListTemplates(w http.ResponseWriter, r *http.R
 	}
 
 	type templateInfo struct {
-		Name     string `json:"name"`     // 显示名称（去掉 _v3.yaml 后缀）
-		Filename string `json:"filename"` // 完整文件名
+		Name      string            `json:"name"`                // 显示名称（去掉 _v3.yaml 后缀）
+		Filename  string            `json:"filename"`            // 完整文件名
+		Variables map[string]string `json:"variables,omitempty"` // 模板自定义变量
 	}
 
 	var templates []templateInfo
@@ -600,9 +606,17 @@ func (h *TemplateV3Handler) handleListTemplates(w http.ResponseWriter, r *http.R
 			displayName = strings.TrimSuffix(displayName, "_v3")
 			displayName = strings.TrimSuffix(displayName, "__v3")
 			displayName = strings.ReplaceAll(displayName, "_", " ")
+
+			// 提取模板自定义变量
+			var variables map[string]string
+			if content, err := os.ReadFile(filepath.Join(templatesDir, name)); err == nil {
+				variables = substore.ExtractTemplateVariables(string(content))
+			}
+
 			templates = append(templates, templateInfo{
-				Name:     displayName,
-				Filename: name,
+				Name:      displayName,
+				Filename:  name,
+				Variables: variables,
 			})
 		}
 	}

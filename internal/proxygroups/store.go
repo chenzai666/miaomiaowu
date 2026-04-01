@@ -22,14 +22,15 @@ func NewStore(initial []byte, source string) (*Store, error) {
 		initial = []byte("[]")
 	}
 
-	// 验证 JSON 有效性
-	if err := validateConfig(initial); err != nil {
+	// 规范化并验证 JSON
+	normalized, err := NormalizeConfig(initial)
+	if err != nil {
 		return nil, fmt.Errorf("invalid initial config: %w", err)
 	}
 
 	// 创建配置的副本,避免外部修改影响内部状态
-	dataCopy := make([]byte, len(initial))
-	copy(dataCopy, initial)
+	dataCopy := make([]byte, len(normalized))
+	copy(dataCopy, normalized)
 
 	return &Store{
 		data:         dataCopy,
@@ -52,8 +53,9 @@ func (s *Store) Snapshot() ([]byte, string, time.Time) {
 
 // 更新内存中的配置, 只有在新数据通过 JSON 验证后才会替换现有数据
 func (s *Store) Update(data []byte, source string, syncedAt time.Time) error {
-	// 先验证,验证失败时不修改内部状态
-	if err := validateConfig(data); err != nil {
+	// 先规范化并验证,验证失败时不修改内部状态
+	normalized, err := NormalizeConfig(data)
+	if err != nil {
 		return fmt.Errorf("invalid config data: %w", err)
 	}
 
@@ -62,8 +64,8 @@ func (s *Store) Update(data []byte, source string, syncedAt time.Time) error {
 	}
 
 	// 创建数据副本
-	dataCopy := make([]byte, len(data))
-	copy(dataCopy, data)
+	dataCopy := make([]byte, len(normalized))
+	copy(dataCopy, normalized)
 
 	// 持锁替换内部状态
 	s.mu.Lock()
@@ -85,13 +87,4 @@ func (s *Store) Unmarshal(v any) error {
 	defer s.mu.RUnlock()
 
 	return json.Unmarshal(s.data, v)
-}
-
-// json 格式验证, 如果格式有误则不更新
-func validateConfig(data []byte) error {
-	var parsed any
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidConfig, err)
-	}
-	return nil
 }

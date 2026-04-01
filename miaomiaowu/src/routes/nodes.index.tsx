@@ -8,6 +8,8 @@ import { Topbar } from '@/components/layout/topbar'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
+
+const CLASH_DRAFT_KEY_PREFIX = 'mmw_clash_config_draft_'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
@@ -24,8 +26,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { parseProxyUrl, toClashProxy, type ProxyNode, type ClashProxy } from '@/lib/proxy-parser'
-import { load as parseYAML } from 'js-yaml'
-import { Check, Pencil, X, Undo2, Activity, Eye, Copy, ChevronDown, Link2, Flag, GripVertical, Zap, Loader2, Expand, List } from 'lucide-react'
+import { load as parseYAML, dump as dumpYAML } from 'js-yaml'
+import { Check, Pencil, X, Undo2, Activity, Eye, Copy, ChevronDown, Link2, Flag, GripVertical, Zap, Loader2, Expand, List, ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import IpIcon from '@/assets/icons/ip.svg'
 import ExchangeIcon from '@/assets/icons/exchange.svg'
@@ -454,6 +456,7 @@ function NodesPage() {
   // 虚拟滚动模式状态 - 从 localStorage 恢复，无缓存时先默认 virtual（后续根据节点数调整）
   const [renderMode, setRenderMode] = useState<RenderMode>(() => getStoredRenderMode() ?? 'virtual')
   const [renderModeInitialized, setRenderModeInitialized] = useState(() => getStoredRenderMode() !== null)
+  const [sortMode, setSortMode] = useState(false)
   const virtualListRef = useRef<HTMLDivElement>(null)
   const tableVirtualListRef = useRef<HTMLDivElement>(null)
 
@@ -481,6 +484,12 @@ function NodesPage() {
   const [editingClashConfig, setEditingClashConfig] = useState<{ nodeId: number; config: string } | null>(null)
   const [clashConfigError, setClashConfigError] = useState<string>('')
   const [jsonErrorLines, setJsonErrorLines] = useState<number[]>([])
+  const [configFormat, setConfigFormat] = useState<'json' | 'yaml'>(() =>
+    (localStorage.getItem('nodeConfigFormat') as 'json' | 'yaml') || 'json'
+  )
+  const [isClashDraftRecoveryOpen, setIsClashDraftRecoveryOpen] = useState(false)
+  const pendingClashDraftRef = useRef<any>(null)
+  const clashConfigOriginalRef = useRef<string>('')
 
   // URI 复制状态
   const [uriDialogOpen, setUriDialogOpen] = useState(false)
@@ -813,9 +822,10 @@ function NodesPage() {
       })
       return response.data
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['nodes'] })
       toast.success('Clash 配置已更新')
+      localStorage.removeItem(CLASH_DRAFT_KEY_PREFIX + variables.nodeId)
       setClashDialogOpen(false)
       // 状态清理会在 onOpenChange 中自动处理
     },
@@ -853,24 +863,43 @@ function NodesPage() {
 
     if (!clashConfig) return
 
-    // 格式化 JSON 以便编辑
+    const nodeId = 'id' in node && typeof node.id === 'number' ? node.id : -1
+
+    // 根据当前格式偏好格式化
+    const fmt = (localStorage.getItem('nodeConfigFormat') as 'json' | 'yaml') || 'json'
+    let formatted: string
     try {
       const parsed = JSON.parse(clashConfig)
-      const formatted = JSON.stringify(parsed, null, 2)
-      setEditingClashConfig({
-        nodeId: 'id' in node && typeof node.id === 'number' ? node.id : -1, // 临时节点使用 -1
-        config: formatted
-      })
+      formatted = fmt === 'yaml'
+        ? dumpYAML(parsed, { indent: 2, lineWidth: -1, noRefs: true })
+        : JSON.stringify(parsed, null, 2)
     } catch {
-      // 如果解析失败，使用原始字符串
-      setEditingClashConfig({
-        nodeId: 'id' in node && typeof node.id === 'number' ? node.id : -1,
-        config: clashConfig
-      })
+      formatted = clashConfig
     }
+
+    clashConfigOriginalRef.current = formatted
+    setEditingClashConfig({ nodeId, config: formatted })
     setClashConfigError('')
     setJsonErrorLines([])
     setClashDialogOpen(true)
+
+    // Check for local draft
+    if (nodeId !== -1) {
+      const draftJson = localStorage.getItem(CLASH_DRAFT_KEY_PREFIX + nodeId)
+      if (draftJson) {
+        try {
+          const draft = JSON.parse(draftJson)
+          if (draft.config !== formatted) {
+            pendingClashDraftRef.current = draft
+            setIsClashDraftRecoveryOpen(true)
+          } else {
+            localStorage.removeItem(CLASH_DRAFT_KEY_PREFIX + nodeId)
+          }
+        } catch {
+          localStorage.removeItem(CLASH_DRAFT_KEY_PREFIX + nodeId)
+        }
+      }
+    }
   }, [])
 
   // 验证并保存 Clash 配置
@@ -878,8 +907,10 @@ function NodesPage() {
     if (!editingClashConfig) return
 
     try {
-      // 验证 JSON 格式
-      const parsedConfig = JSON.parse(editingClashConfig.config)
+      // 根据当前格式解析
+      const parsedConfig = configFormat === 'yaml'
+        ? parseYAML(editingClashConfig.config) as Record<string, unknown>
+        : JSON.parse(editingClashConfig.config)
 
       // 检查必需字段
       if (!parsedConfig.name || !parsedConfig.type || !parsedConfig.server || !parsedConfig.port) {
@@ -887,13 +918,14 @@ function NodesPage() {
         return
       }
 
-      // 保存配置（压缩格式，不带空格和换行）
+      // 保存配置（压缩 JSON 格式）
       updateClashConfigMutation.mutate({
         nodeId: editingClashConfig.nodeId,
         clashConfig: JSON.stringify(parsedConfig)
       })
     } catch (error) {
-      setClashConfigError(`JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`)
+      const label = configFormat === 'yaml' ? 'YAML' : 'JSON'
+      setClashConfigError(`${label} 格式错误: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -906,37 +938,106 @@ function NodesPage() {
       config: value
     })
 
-    // 实时验证 JSON 格式
+    // 根据当前格式实时验证
+    if (configFormat === 'yaml') {
+      try {
+        parseYAML(value)
+        setClashConfigError('')
+        setJsonErrorLines([])
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        setClashConfigError(`YAML 格式错误: ${errorMsg}`)
+        setJsonErrorLines([])
+      }
+    } else {
+      try {
+        JSON.parse(value)
+        setClashConfigError('')
+        setJsonErrorLines([])
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        setClashConfigError(`JSON 格式错误: ${errorMsg}`)
+
+        if (error instanceof SyntaxError && errorMsg.includes('position')) {
+          const match = errorMsg.match(/position (\d+)/)
+          if (match) {
+            const position = parseInt(match[1], 10)
+            const lines = value.substring(0, position).split('\n')
+            const errorLine = lines.length
+            const isMissingCommaError = errorMsg.includes("Expected ',' or '}'")
+            const errorLines = isMissingCommaError && errorLine > 1
+              ? [errorLine - 1, errorLine]
+              : [errorLine]
+            setJsonErrorLines(errorLines)
+          }
+        } else {
+          setJsonErrorLines([])
+        }
+      }
+    }
+  }
+
+  // Write clash config draft to localStorage when changed
+  useEffect(() => {
+    if (!editingClashConfig || !clashDialogOpen || editingClashConfig.nodeId === -1) return
+    if (editingClashConfig.config === clashConfigOriginalRef.current) return
+    localStorage.setItem(
+      CLASH_DRAFT_KEY_PREFIX + editingClashConfig.nodeId,
+      JSON.stringify({ nodeId: editingClashConfig.nodeId, config: editingClashConfig.config, savedAt: Date.now() })
+    )
+  }, [editingClashConfig, clashDialogOpen])
+
+  const handleRecoverClashDraft = () => {
+    const draft = pendingClashDraftRef.current
+    if (!draft) return
+    setEditingClashConfig({ nodeId: draft.nodeId, config: draft.config })
     try {
-      JSON.parse(value)
+      if (configFormat === 'yaml') parseYAML(draft.config)
+      else JSON.parse(draft.config)
       setClashConfigError('')
       setJsonErrorLines([])
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error)
-      setClashConfigError(`JSON 格式错误: ${errorMsg}`)
-
-      // 尝试提取错误行号
-      // JSON.parse 错误信息格式通常是 "Unexpected token ... in JSON at position ..."
-      // 我们需要根据position计算行号
-      if (error instanceof SyntaxError && errorMsg.includes('position')) {
-        const match = errorMsg.match(/position (\d+)/)
-        if (match) {
-          const position = parseInt(match[1], 10)
-          const lines = value.substring(0, position).split('\n')
-          const errorLine = lines.length
-
-          // 只有当错误是 "Expected ',' or '}'" 时，才同时标记错误行和上一行
-          // 因为这种错误通常是上一行缺少逗号导致的
-          const isMissingCommaError = errorMsg.includes("Expected ',' or '}'")
-          const errorLines = isMissingCommaError && errorLine > 1
-            ? [errorLine - 1, errorLine]
-            : [errorLine]
-          setJsonErrorLines(errorLines)
-        }
-      } else {
-        setJsonErrorLines([])
-      }
+      const label = configFormat === 'yaml' ? 'YAML' : 'JSON'
+      setClashConfigError(`${label} 格式错误: ${error instanceof Error ? error.message : String(error)}`)
     }
+    setIsClashDraftRecoveryOpen(false)
+    pendingClashDraftRef.current = null
+  }
+
+  const handleDiscardClashDraft = () => {
+    if (editingClashConfig) {
+      localStorage.removeItem(CLASH_DRAFT_KEY_PREFIX + editingClashConfig.nodeId)
+    }
+    setIsClashDraftRecoveryOpen(false)
+    pendingClashDraftRef.current = null
+  }
+
+  // 切换配置格式
+  const handleConfigFormatChange = (fmt: 'json' | 'yaml') => {
+    if (fmt === configFormat || !editingClashConfig) return
+
+    try {
+      // 解析当前格式
+      const parsed = configFormat === 'yaml'
+        ? parseYAML(editingClashConfig.config)
+        : JSON.parse(editingClashConfig.config)
+
+      // 转为目标格式
+      const converted = fmt === 'yaml'
+        ? dumpYAML(parsed, { indent: 2, lineWidth: -1, noRefs: true })
+        : JSON.stringify(parsed, null, 2)
+
+      setEditingClashConfig({ ...editingClashConfig, config: converted })
+      setClashConfigError('')
+      setJsonErrorLines([])
+    } catch {
+      // 转换失败不切换，提示用户先修正格式
+      setClashConfigError(`请先修正当前 ${configFormat === 'yaml' ? 'YAML' : 'JSON'} 格式错误后再切换`)
+      return
+    }
+
+    setConfigFormat(fmt)
+    localStorage.setItem('nodeConfigFormat', fmt)
   }
 
   // 复制 URI 到剪贴板
@@ -2337,6 +2438,50 @@ function NodesPage() {
     setBatchDraggingIds(new Set())
   }, [])
 
+  // 节点排序快捷操作：置顶/置底/上移/下移，支持单节点和批量
+  const handleMoveNodes = useCallback((direction: 'top' | 'bottom' | 'up' | 'down', targetIds?: Set<number>) => {
+    const ids = targetIds || selectedNodeIds
+    if (ids.size === 0) return
+
+    const currentOrder = [...nodeOrder]
+    // 确保所有已保存节点都在 order 中
+    const allSavedIds = savedNodes.map(n => n.id)
+    const orderSet = new Set(currentOrder)
+    for (const id of allSavedIds) {
+      if (!orderSet.has(id)) currentOrder.push(id)
+    }
+
+    const movingIds = new Set(ids)
+    const movingItems = currentOrder.filter(id => movingIds.has(id))
+    const restItems = currentOrder.filter(id => !movingIds.has(id))
+
+    let newOrder: number[]
+    if (direction === 'top') {
+      newOrder = [...movingItems, ...restItems]
+    } else if (direction === 'bottom') {
+      newOrder = [...restItems, ...movingItems]
+    } else if (direction === 'up') {
+      // 找到选中节点块在原 order 中的最小索引
+      const firstIdx = currentOrder.findIndex(id => movingIds.has(id))
+      if (firstIdx <= 0) return
+      // 将选中节点整体上移一位：插入到 firstIdx-1 的位置
+      const insertBefore = currentOrder[firstIdx - 1]
+      const insertIdx = restItems.indexOf(insertBefore)
+      newOrder = [...restItems.slice(0, insertIdx), ...movingItems, ...restItems.slice(insertIdx)]
+    } else {
+      // down: 找到选中节点块在原 order 中的最大索引
+      const lastIdx = currentOrder.length - 1 - [...currentOrder].reverse().findIndex(id => movingIds.has(id))
+      if (lastIdx >= currentOrder.length - 1) return
+      // 将选中节点整体下移一位：插入到 lastIdx+1 之后
+      const insertAfter = currentOrder[lastIdx + 1]
+      const insertIdx = restItems.indexOf(insertAfter)
+      newOrder = [...restItems.slice(0, insertIdx + 1), ...movingItems, ...restItems.slice(insertIdx + 1)]
+    }
+
+    setNodeOrder(newOrder)
+    updateNodeOrderMutation.mutate(newOrder)
+  }, [selectedNodeIds, nodeOrder, savedNodes, updateNodeOrderMutation])
+
   const filteredNodes = useMemo(() => {
     let nodes = displayNodes
 
@@ -3002,11 +3147,23 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                         )}
                       </DndContext>
                       </div>
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        onClick={() => setRenderMode(m => m === 'virtual' ? 'expanded' : 'virtual')}
-                      >
+                      <div className='flex gap-2'>
+                        <Button
+                          variant={sortMode ? 'default' : 'outline'}
+                          size='sm'
+                          onClick={() => {
+                            setSortMode(m => !m)
+                            if (sortMode) setSelectedNodeIds(new Set())
+                          }}
+                        >
+                          <ArrowUpDown className='size-3.5 mr-1' />
+                          排序模式
+                        </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => setRenderMode(m => m === 'virtual' ? 'expanded' : 'virtual')}
+                        >
                         {renderMode === 'virtual' ? (
                           <>
                             <Expand className='size-3.5 mr-1' />
@@ -3019,6 +3176,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           </>
                         )}
                       </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -4850,6 +5008,24 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       </DialogDescription>
                                     </DialogHeader>
                                     <div className='mt-4 flex-1 flex flex-col gap-3 min-h-0'>
+                                      <div className='flex gap-1'>
+                                        <Button
+                                          variant={configFormat === 'json' ? 'default' : 'outline'}
+                                          size='sm'
+                                          className='h-7 px-3 text-xs'
+                                          onClick={() => handleConfigFormatChange('json')}
+                                        >
+                                          JSON
+                                        </Button>
+                                        <Button
+                                          variant={configFormat === 'yaml' ? 'default' : 'outline'}
+                                          size='sm'
+                                          className='h-7 px-3 text-xs'
+                                          onClick={() => handleConfigFormatChange('yaml')}
+                                        >
+                                          YAML
+                                        </Button>
+                                      </div>
                                       <div className='flex-1 flex border rounded overflow-hidden bg-muted'>
                                         {/* 行号列 */}
                                         <div className='flex flex-col bg-muted-foreground/10 text-muted-foreground text-xs font-mono select-none py-3 px-2 text-right'>
@@ -4871,7 +5047,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           value={editingClashConfig?.config || ''}
                                           onChange={(e) => handleClashConfigChange(e.target.value)}
                                           className='font-mono text-xs flex-1 min-h-[400px] resize-none border-0 rounded-none focus-visible:ring-0 leading-5'
-                                          placeholder='输入 JSON 配置...'
+                                          placeholder={configFormat === 'yaml' ? '输入 YAML 配置...' : '输入 JSON 配置...'}
                                           readOnly={editingClashConfig?.nodeId === -1}
                                         />
                                       </div>
@@ -5331,6 +5507,24 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
             </DialogDescription>
           </DialogHeader>
           <div className='mt-4 flex-1 flex flex-col gap-3 min-h-0'>
+            <div className='flex gap-1'>
+              <Button
+                variant={configFormat === 'json' ? 'default' : 'outline'}
+                size='sm'
+                className='h-7 px-3 text-xs'
+                onClick={() => handleConfigFormatChange('json')}
+              >
+                JSON
+              </Button>
+              <Button
+                variant={configFormat === 'yaml' ? 'default' : 'outline'}
+                size='sm'
+                className='h-7 px-3 text-xs'
+                onClick={() => handleConfigFormatChange('yaml')}
+              >
+                YAML
+              </Button>
+            </div>
             <div className='flex-1 flex border rounded overflow-hidden bg-muted'>
               {/* 行号列 */}
               <div className='flex flex-col bg-muted-foreground/10 text-muted-foreground text-xs font-mono select-none py-3 px-2 text-right'>
@@ -5352,7 +5546,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                 value={editingClashConfig?.config || ''}
                 onChange={(e) => handleClashConfigChange(e.target.value)}
                 className='font-mono text-xs flex-1 min-h-[400px] resize-none border-0 rounded-none focus-visible:ring-0 leading-5'
-                placeholder='输入 JSON 配置...'
+                placeholder={configFormat === 'yaml' ? '输入 YAML 配置...' : '输入 JSON 配置...'}
                 readOnly={editingClashConfig?.nodeId === -1}
               />
             </div>
@@ -5382,6 +5576,22 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Clash 配置草稿恢复对话框 */}
+      <AlertDialog open={isClashDraftRecoveryOpen} onOpenChange={setIsClashDraftRecoveryOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>恢复本地缓存</AlertDialogTitle>
+            <AlertDialogDescription>
+              检测到未保存的本地缓存，是否恢复？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleDiscardClashDraft}>放弃</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRecoverClashDraft}>恢复</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* 探针绑定对话框 */}
       <Dialog open={probeBindingDialogOpen} onOpenChange={setProbeBindingDialogOpen}>
@@ -6078,6 +6288,50 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* 底部悬浮批量排序栏 */}
+      {sortMode && selectedNodeIds.size > 0 && (
+        <div className='fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-background/95 backdrop-blur border shadow-lg rounded-lg px-4 py-2 flex items-center gap-3'>
+          <span className='text-sm text-muted-foreground whitespace-nowrap'>已选 {selectedNodeIds.size} 个节点</span>
+          <div className='flex items-center gap-0.5 border rounded-md px-0.5'>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => handleMoveNodes('top')}>
+                  <ArrowUpToLine className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side='top'>置顶</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => handleMoveNodes('up')}>
+                  <ArrowUp className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side='top'>上移</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => handleMoveNodes('down')}>
+                  <ArrowDown className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side='top'>下移</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => handleMoveNodes('bottom')}>
+                  <ArrowDownToLine className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side='top'>置底</TooltipContent>
+            </Tooltip>
+          </div>
+          <Button variant='ghost' size='icon' className='h-8 w-8 text-muted-foreground' onClick={() => { setSortMode(false); setSelectedNodeIds(new Set()) }}>
+            <X className='size-4' />
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

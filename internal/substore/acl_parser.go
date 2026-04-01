@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const gcxRegexProxyPrefix = "__MMW_GCX_REGEX__:"
+
 // ACLRuleset represents a ruleset definition in ACL4SSR config
 type ACLRuleset struct {
 	Group    string // Target proxy group
@@ -158,8 +160,25 @@ func parseProxyGroup(line string) ACLProxyGroup {
 		Proxies: make([]string, 0),
 	}
 
+	expectGCXRegex := false
 	for i := 2; i < len(parts); i++ {
-		part := parts[i]
+		part := strings.TrimSpace(parts[i])
+
+		// GCX marker: the next token is treated as a regex pattern.
+		// Example: custom_proxy_group=...`select`GCX`^((?!...).)*$
+		if isGCXMarker(part) {
+			expectGCXRegex = true
+			continue
+		}
+
+		if expectGCXRegex {
+			pattern := strings.TrimPrefix(part, "[]")
+			if pattern != "" {
+				pg.Proxies = append(pg.Proxies, gcxRegexProxyPrefix+pattern)
+			}
+			expectGCXRegex = false
+			continue
+		}
 
 		// Detect health check URL
 		if strings.HasPrefix(part, "http://") || strings.HasPrefix(part, "https://") {
@@ -212,13 +231,32 @@ func parseProxyGroup(line string) ACLProxyGroup {
 }
 
 // IsRegexProxyPattern checks if a proxy name is a regex pattern
-// Format: (option1|option2|option3)
+// Supported examples: (option1|option2|option3), my.*, ^my-[0-9]+$
 func IsRegexProxyPattern(proxy string) bool {
 	proxy = strings.TrimSpace(proxy)
-	if len(proxy) < 3 {
+	if _, ok := unwrapGCXRegex(proxy); ok {
+		return true
+	}
+	if len(proxy) < 2 {
 		return false
 	}
-	return strings.HasPrefix(proxy, "(") && strings.HasSuffix(proxy, ")") && strings.Contains(proxy, "|")
+
+	likelyRegex := (strings.HasPrefix(proxy, "(") && strings.HasSuffix(proxy, ")")) ||
+		strings.Contains(proxy, ".*") || strings.Contains(proxy, ".+") || strings.Contains(proxy, ".?") ||
+		strings.HasPrefix(proxy, "^") || strings.HasSuffix(proxy, "$") ||
+		strings.Contains(proxy, "(?<!") || strings.Contains(proxy, "(?<=")
+
+	if !likelyRegex {
+		return false
+	}
+
+	// Treat as regex even when original syntax is not fully RE2-compatible.
+	// It will be normalized before matching.
+	if _, err := compileCompatibleRegex(proxy); err == nil {
+		return true
+	}
+
+	return true
 }
 
 // MergeRegexFilters merges multiple regex filters into one
@@ -226,10 +264,17 @@ func IsRegexProxyPattern(proxy string) bool {
 // Output: "(香港|HK|日本|JP)"
 func MergeRegexFilters(filters []string) string {
 	if len(filters) == 1 {
+		if regex, ok := unwrapGCXRegex(filters[0]); ok {
+			return regex
+		}
 		return filters[0]
 	}
 	var allOptions []string
 	for _, f := range filters {
+		if regex, ok := unwrapGCXRegex(f); ok {
+			allOptions = append(allOptions, regex)
+			continue
+		}
 		// Remove outer parentheses and extract inner options
 		inner := strings.TrimPrefix(strings.TrimSuffix(f, ")"), "(")
 		allOptions = append(allOptions, inner)
@@ -243,9 +288,27 @@ func MergeRegexFilters(filters []string) string {
 func ExtractSurgeRegexFilter(filters []string) string {
 	var allOptions []string
 	for _, f := range filters {
+		if regex, ok := unwrapGCXRegex(f); ok {
+			allOptions = append(allOptions, regex)
+			continue
+		}
 		// Remove outer parentheses and extract inner options
 		inner := strings.TrimPrefix(strings.TrimSuffix(f, ")"), "(")
 		allOptions = append(allOptions, inner)
 	}
 	return strings.Join(allOptions, "|")
+}
+
+func unwrapGCXRegex(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if strings.HasPrefix(trimmed, gcxRegexProxyPrefix) {
+		return strings.TrimPrefix(trimmed, gcxRegexProxyPrefix), true
+	}
+	return "", false
+}
+
+func isGCXMarker(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.TrimPrefix(trimmed, "[]")
+	return strings.EqualFold(trimmed, "GCX")
 }

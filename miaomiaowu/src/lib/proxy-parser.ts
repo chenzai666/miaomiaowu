@@ -5,6 +5,7 @@
  */
 
 import { toast } from "sonner"
+import { isIPv4, isIPv6, pickFirstDefined, applyTlsSniFallback } from "@/lib/substore/producers/utils"
 
 // 通用代理节点接口
 export interface ProxyNode {
@@ -102,7 +103,7 @@ function parseVmess(url: string): ProxyNode | null {
     }
 
     // SNI/Servername
-    if (config.sni) {
+    if (config.sni !== undefined) {
       node.servername = safeDecodeURIComponent(config.sni)
     } else if (config.host && config.tls) {
       node.servername = safeDecodeURIComponent(config.host)
@@ -805,7 +806,12 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
     switch (protocol) {
       case 'trojan':
         node.password = password
-        node.sni = safeDecodeURIComponent(queryParams.sni || queryParams.peer || queryParams.host || server)
+        {
+          const trojanSni = pickFirstDefined(queryParams.sni, queryParams.peer, queryParams.host)
+          if (trojanSni !== undefined) {
+            node.sni = safeDecodeURIComponent(trojanSni)
+          }
+        }
         node.network = queryParams.type || 'tcp'
 
         // TLS 设置
@@ -828,6 +834,15 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
             host: queryParams.host ? [safeDecodeURIComponent(queryParams.host)] : [],
             path: safeDecodeURIComponent(queryParams.path) || '/'
           }
+        }
+
+        // 解析 trojan reality 参数
+        if (queryParams.security === 'reality') {
+          node.tls = true
+          node.pbk = queryParams.pbk || ''
+          node.sid = queryParams.sid || ''
+          node.spx = queryParams.spx || ''
+          node['public-key'] = queryParams.pbk || ''
         }
 
         // 其他参数
@@ -855,8 +870,11 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
         node.security = queryParams.security || 'none'
         node.tls = queryParams.security === 'tls' || queryParams.security === 'reality'
         node.network = queryParams.type || 'tcp'
-        node.sni = safeDecodeURIComponent(queryParams.sni || server)
-        node.servername = safeDecodeURIComponent(queryParams.sni || server)
+        if (queryParams.sni !== undefined) {
+          const decodedSni = safeDecodeURIComponent(queryParams.sni)
+          node.sni = decodedSni
+          node.servername = decodedSni
+        }
         node.skipCertVerify = queryParams.allowInsecure === '1'
         node['spider-x'] = queryParams.spx
 
@@ -925,7 +943,12 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
         // node.ports = queryParams.mport || port.toString()
         node.obfs = queryParams.obfs
         node['obfs-password'] = queryParams['obfs-password'] || queryParams.obfsParam
-        node.sni = safeDecodeURIComponent(queryParams.peer || queryParams.sni || (server.startsWith('[') ? '' : server))
+        {
+          const hySni = pickFirstDefined(queryParams.peer, queryParams.sni)
+          if (hySni !== undefined) {
+            node.sni = safeDecodeURIComponent(hySni)
+          }
+        }
         node.alpn = queryParams.alpn ? queryParams.alpn.split(',') : undefined
         // insecure=1 表示跳过证书验证
         node.skipCertVerify = queryParams.insecure === '1' || queryParams.allowInsecure === '1' || queryParams['skip-cert-verify'] === '1'
@@ -959,7 +982,9 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
             node.password = queryParams.password || ''
           }
         }
-        node.sni = safeDecodeURIComponent(queryParams.sni || server)
+        if (queryParams.sni !== undefined) {
+          node.sni = safeDecodeURIComponent(queryParams.sni)
+        }
         node.alpn = queryParams.alpn ? queryParams.alpn.split(',') : ['h3']
         node.skipCertVerify = queryParams.allowInsecure === '1' || queryParams.allow_insecure === '1'
         node['congestion-controller'] = queryParams.congestion_control || 'bbr'
@@ -976,7 +1001,12 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
 
       case 'anytls':
         node.password = password
-        node.sni = safeDecodeURIComponent(queryParams.peer || queryParams.sni || (server.startsWith('[') ? '' : server))
+        {
+          const anytlsSni = pickFirstDefined(queryParams.peer, queryParams.sni)
+          if (anytlsSni !== undefined) {
+            node.sni = safeDecodeURIComponent(anytlsSni)
+          }
+        }
         node.alpn = queryParams.alpn ? queryParams.alpn.split(',') : undefined
         node.skipCertVerify = queryParams.insecure === '1' || queryParams.allowInsecure === '1' || queryParams['skip-cert-verify'] === '1'
         // client-fingerprint
@@ -1006,35 +1036,16 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
       node['ip-version'] = queryParams["ip-version"]
     }
 
+    applyTlsSniFallback(node)
+    if (protocol === 'vless' && node.servername === undefined && node.sni !== undefined) {
+      node.servername = node.sni
+    }
+
     return node
   } catch (e) {
     toast(`Parse ${protocol} error: ${e instanceof Error ? e.message : String(e)}`)
     return null
   }
-}
-
-/**
- * 检查是否是 IPv4 地址
- */
-function isIPv4(str: string): boolean {
-  const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/
-  if (!ipv4Regex.test(str)) return false
-  const parts = str.split('.')
-  return parts.every(part => {
-    const num = parseInt(part, 10)
-    return num >= 0 && num <= 255
-  })
-}
-
-/**
- * 检查是否是 IPv6 地址
- */
-function isIPv6(str: string): boolean {
-  // 简化的 IPv6 检测
-  return /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(str) ||
-         /^::([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$/.test(str) ||
-         /^([0-9a-fA-F]{1,4}:){1,6}:$/.test(str) ||
-         /^::$/.test(str)
 }
 
 /**
@@ -1332,7 +1343,7 @@ export function toClashProxy(node: ProxyNode): ClashProxy {
 
   // SNI 设置 - 特定协议需要输出 sni 字段
   if (node.type === 'hysteria' || node.type === 'hysteria2' || node.type === 'trojan' || node.type === 'tuic' || node.type === 'anytls') {
-    if (node.sni && node.sni !== node.server) {
+    if (typeof node.sni === 'string' && (node.sni === '' || node.sni !== node.server)) {
       clash.sni = node.sni
     }
   }

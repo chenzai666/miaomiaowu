@@ -62,6 +62,109 @@ func safeDecodeURIComponent(s string) string {
 	return decoded
 }
 
+func toStringMapAny(v any) map[string]any {
+	switch m := v.(type) {
+	case map[string]any:
+		return m
+	case map[string]string:
+		out := make(map[string]any, len(m))
+		for k, val := range m {
+			out[k] = val
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func firstString(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case []string:
+		if len(val) > 0 {
+			return val[0]
+		}
+	case []any:
+		for _, item := range val {
+			if s, ok := item.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func getTransportHost(node map[string]any) string {
+	network, _ := node["network"].(string)
+	if network == "" {
+		return ""
+	}
+
+	optsKeys := []string{network + "-opts"}
+	if network == "http" || network == "h2" {
+		optsKeys = append(optsKeys, "h2-opts")
+	}
+
+	for _, optsKey := range optsKeys {
+		opts := toStringMapAny(node[optsKey])
+		if opts == nil {
+			continue
+		}
+
+		headers := toStringMapAny(opts["headers"])
+		if headers != nil {
+			if host := firstString(headers["Host"]); host != "" {
+				return host
+			}
+			if host := firstString(headers["host"]); host != "" {
+				return host
+			}
+		}
+
+		if host := firstString(opts["host"]); host != "" {
+			return host
+		}
+	}
+
+	return ""
+}
+
+func shouldApplyTlsSniFallback(node map[string]any) bool {
+	if tls, ok := node["tls"].(bool); ok && tls {
+		return true
+	}
+	t, _ := node["type"].(string)
+	switch t {
+	case "trojan", "hysteria", "hysteria2", "tuic", "anytls":
+		return true
+	default:
+		return false
+	}
+}
+
+// THIRD-PARTY BUG FIX
+// 允许设置 sni 为空字符串且为防止影响其他逻辑, 这里先改成这样判断
+// 本质上是为了防止本来应该使用 server 作为 sni 的情况下, 若之后进行了域名解析, 导致 server 变成 ip 丢失了 sni
+// 为了兼容性, 暂时先这么改
+// see https://github.com/sub-store-org/Sub-Store/commit/38e49e508b620dac29ae87178cfca80f750468ac
+func applyTlsSniFallback(node map[string]any, field string) {
+	if !shouldApplyTlsSniFallback(node) {
+		return
+	}
+	if _, exists := node[field]; exists {
+		return
+	}
+	if transportHost := getTransportHost(node); transportHost != "" {
+		node[field] = transportHost
+		return
+	}
+	server, _ := node["server"].(string)
+	if server != "" && !isIP(server) {
+		node[field] = server
+	}
+}
+
 // parseVmessURL parses vmess:// URL and returns Clash format
 func parseVmessURL(uri string) (map[string]any, error) {
 	content := strings.TrimPrefix(uri, "vmess://")
@@ -101,8 +204,8 @@ func parseVmessURL(uri string) (map[string]any, error) {
 	node["tls"] = tls == "tls"
 
 	// SNI/Servername
-	if sni := getString(config, "sni", ""); sni != "" {
-		node["servername"] = safeDecodeURIComponent(sni)
+	if _, ok := config["sni"]; ok {
+		node["servername"] = safeDecodeURIComponent(getString(config, "sni", ""))
 	} else if host := getString(config, "host", ""); host != "" && tls == "tls" {
 		node["servername"] = safeDecodeURIComponent(host)
 	}
@@ -161,6 +264,8 @@ func parseVmessURL(uri string) (map[string]any, error) {
 			"grpc-service-name": safeDecodeURIComponent(getString(config, "path", getString(config, "grpc-service-name", ""))),
 		}
 	}
+
+	applyTlsSniFallback(node, "servername")
 
 	return node, nil
 }
@@ -627,15 +732,13 @@ func parseTrojanURL(uri string) (map[string]any, error) {
 		"tls":      true, // Trojan 默认启用 TLS
 	}
 
-	// SNI
-	if sni := queryParams["sni"]; sni != "" {
+	// SNI (支持显式空字符串)
+	if sni, ok := queryParams["sni"]; ok {
 		node["sni"] = safeDecodeURIComponent(sni)
-	} else if peer := queryParams["peer"]; peer != "" {
+	} else if peer, ok := queryParams["peer"]; ok {
 		node["sni"] = safeDecodeURIComponent(peer)
-	} else if host := queryParams["host"]; host != "" {
+	} else if host, ok := queryParams["host"]; ok {
 		node["sni"] = safeDecodeURIComponent(host)
-	} else {
-		node["sni"] = server
 	}
 
 	// Network
@@ -677,6 +780,7 @@ func parseTrojanURL(uri string) (map[string]any, error) {
 		}
 		node["h2-opts"] = h2Opts
 	}
+	applyTlsSniFallback(node, "sni")
 
 	// ALPN
 	if alpn := queryParams["alpn"]; alpn != "" {
@@ -754,11 +858,9 @@ func parseVlessURL(uri string) (map[string]any, error) {
 	}
 	node["network"] = network
 
-	// SNI/Servername
-	if sni := queryParams["sni"]; sni != "" {
+	// SNI/Servername (支持显式空字符串)
+	if sni, ok := queryParams["sni"]; ok {
 		node["servername"] = safeDecodeURIComponent(sni)
-	} else {
-		node["servername"] = server
 	}
 
 	// Skip cert verify
@@ -840,6 +942,12 @@ func parseVlessURL(uri string) (map[string]any, error) {
 			node["mode"] = "auto"
 		}
 	}
+	applyTlsSniFallback(node, "servername")
+	if _, exists := node["servername"]; !exists {
+		if tlsEnabled, ok := node["tls"].(bool); !ok || !tlsEnabled {
+			node["servername"] = server
+		}
+	}
 
 	// ALPN
 	if alpn := queryParams["alpn"]; alpn != "" {
@@ -905,13 +1013,11 @@ func parseHysteriaGeneric(uri string, protocol string) (map[string]any, error) {
 		"udp":      true,
 	}
 
-	// SNI
-	if sni := queryParams["sni"]; sni != "" {
+	// SNI (支持显式空字符串)
+	if sni, ok := queryParams["sni"]; ok {
 		node["sni"] = safeDecodeURIComponent(sni)
-	} else if peer := queryParams["peer"]; peer != "" {
+	} else if peer, ok := queryParams["peer"]; ok {
 		node["sni"] = safeDecodeURIComponent(peer)
-	} else if !strings.HasPrefix(server, "[") {
-		node["sni"] = server
 	}
 
 	// OBFS
@@ -948,6 +1054,7 @@ func parseHysteriaGeneric(uri string, protocol string) (map[string]any, error) {
 	} else if downmbps := queryParams["downmbps"]; downmbps != "" {
 		node["down"] = downmbps
 	}
+	applyTlsSniFallback(node, "sni")
 
 	return node, nil
 }
@@ -1003,12 +1110,11 @@ func parseTuicURL(uri string) (map[string]any, error) {
 		"udp":      true,
 	}
 
-	// SNI
-	if sni := queryParams["sni"]; sni != "" {
+	// SNI (支持显式空字符串)
+	if sni, ok := queryParams["sni"]; ok {
 		node["sni"] = safeDecodeURIComponent(sni)
-	} else {
-		node["sni"] = server
 	}
+	applyTlsSniFallback(node, "sni")
 
 	// ALPN
 	if alpn := queryParams["alpn"]; alpn != "" {
@@ -1077,14 +1183,13 @@ func parseAnytlsURL(uri string) (map[string]any, error) {
 		"udp":      true,
 	}
 
-	// SNI
-	if sni := queryParams["sni"]; sni != "" {
+	// SNI (支持显式空字符串)
+	if sni, ok := queryParams["sni"]; ok {
 		node["sni"] = safeDecodeURIComponent(sni)
-	} else if peer := queryParams["peer"]; peer != "" {
+	} else if peer, ok := queryParams["peer"]; ok {
 		node["sni"] = safeDecodeURIComponent(peer)
-	} else if !strings.HasPrefix(server, "[") {
-		node["sni"] = server
 	}
+	applyTlsSniFallback(node, "sni")
 
 	// ALPN
 	if alpn := queryParams["alpn"]; alpn != "" {
@@ -1365,4 +1470,9 @@ func isIPv6(s string) bool {
 		regexp.MustCompile(`^::([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$`).MatchString(s) ||
 		regexp.MustCompile(`^([0-9a-fA-F]{1,4}:){1,6}:$`).MatchString(s) ||
 		s == "::"
+}
+
+func isIP(s string) bool {
+	normalized := strings.TrimPrefix(strings.TrimSuffix(s, "]"), "[")
+	return isIPv4(normalized) || isIPv6(normalized)
 }

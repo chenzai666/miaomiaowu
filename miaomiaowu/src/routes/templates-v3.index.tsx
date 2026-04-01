@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -10,6 +10,8 @@ import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
+
+const TEMPLATE_DRAFT_KEY_PREFIX = 'mmw_template_v3_draft_'
 
 import { DataTable } from '@/components/data-table'
 import type { DataTableColumn } from '@/components/data-table'
@@ -31,6 +33,7 @@ import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import {
   extractProxyGroups,
+  extractTemplateVariables,
   updateProxyGroups,
   createDefaultFormState,
   parseTemplate,
@@ -68,6 +71,7 @@ function TemplatesV3Page() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false)
+  const [isDraftRecoveryOpen, setIsDraftRecoveryOpen] = useState(false)
 
   // Editing state
   const [editingTemplateName, setEditingTemplateName] = useState<string | null>(null)
@@ -75,7 +79,10 @@ function TemplatesV3Page() {
   const [proxyGroups, setProxyGroups] = useState<ProxyGroupFormState[]>([])
   const [editorTab, setEditorTab] = useState<'visual' | 'yaml'>('visual')
   const [isDirty, setIsDirty] = useState(false)
+  const isInitLoadRef = useRef(false)
+  const pendingDraftRef = useRef<any>(null)
   const [enableRegionProxyGroups, setEnableRegionProxyGroups] = useState(false)
+  const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({})
 
   // Delete/Rename state
   const [deletingTemplateName, setDeletingTemplateName] = useState<string | null>(null)
@@ -142,6 +149,9 @@ function TemplatesV3Page() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rule-templates'] })
       queryClient.invalidateQueries({ queryKey: ['rule-template', editingTemplateName] })
+      if (editingTemplateName) {
+        localStorage.removeItem(TEMPLATE_DRAFT_KEY_PREFIX + editingTemplateName)
+      }
       toast.success('模板保存成功')
       setIsDirty(false)
       // Close editor after successful save
@@ -230,13 +240,37 @@ function TemplatesV3Page() {
   // Load template content when data is fetched
   useEffect(() => {
     if (templateData && isEditorOpen) {
+      isInitLoadRef.current = true
       setTemplateContent(templateData)
-      const groups = extractProxyGroups(templateData)
+      const vars = extractTemplateVariables(templateData)
+      setTemplateVariables(vars)
+      const groups = extractProxyGroups(templateData, vars)
       setProxyGroups(groups)
       // Auto-enable region proxy groups toggle if any group has includeRegionProxyGroups
       const hasRegionProxyGroups = groups.some(g => g.includeRegionProxyGroups)
       setEnableRegionProxyGroups(hasRegionProxyGroups)
       setIsDirty(false)
+      // Allow ProxyGroupSelect's ensureMarkers setTimeout to finish before enabling dirty tracking
+      setTimeout(() => {
+        isInitLoadRef.current = false
+        // Check for local draft
+        if (editingTemplateName) {
+          const draftJson = localStorage.getItem(TEMPLATE_DRAFT_KEY_PREFIX + editingTemplateName)
+          if (draftJson) {
+            try {
+              const draft = JSON.parse(draftJson)
+              if (draft.templateContent !== templateData) {
+                pendingDraftRef.current = draft
+                setIsDraftRecoveryOpen(true)
+              } else {
+                localStorage.removeItem(TEMPLATE_DRAFT_KEY_PREFIX + editingTemplateName)
+              }
+            } catch {
+              localStorage.removeItem(TEMPLATE_DRAFT_KEY_PREFIX + editingTemplateName)
+            }
+          }
+        }
+      }, 50)
     }
   }, [templateData, isEditorOpen])
 
@@ -253,6 +287,24 @@ function TemplatesV3Page() {
     }
   }, [proxyGroups, isEditorOpen])
 
+  // Write draft to localStorage when dirty
+  useEffect(() => {
+    if (!isDirty || !editingTemplateName || isInitLoadRef.current) return
+    let content = templateContent
+    if (editorTab === 'visual' && proxyGroups.length > 0) {
+      content = updateProxyGroups(templateContent, proxyGroups)
+    }
+    const draft = {
+      templateContent: content,
+      proxyGroups,
+      enableRegionProxyGroups,
+      templateVariables,
+      editorTab,
+      savedAt: Date.now(),
+    }
+    localStorage.setItem(TEMPLATE_DRAFT_KEY_PREFIX + editingTemplateName, JSON.stringify(draft))
+  }, [isDirty, templateContent, proxyGroups, enableRegionProxyGroups, templateVariables, editorTab, editingTemplateName])
+
   // Sync proxy groups to YAML when switching tabs
   const syncProxyGroupsToYaml = useCallback(() => {
     if (proxyGroups.length > 0) {
@@ -266,7 +318,9 @@ function TemplatesV3Page() {
     if (editorTab === 'visual' && tab === 'yaml') {
       syncProxyGroupsToYaml()
     } else if (editorTab === 'yaml' && tab === 'visual') {
-      setProxyGroups(extractProxyGroups(templateContent))
+      const vars = extractTemplateVariables(templateContent)
+      setTemplateVariables(vars)
+      setProxyGroups(extractProxyGroups(templateContent, vars))
     }
     setEditorTab(tab as 'visual' | 'yaml')
   }
@@ -363,6 +417,29 @@ function TemplatesV3Page() {
     setEnableRegionProxyGroups(false)
   }
 
+  const handleRecoverDraft = () => {
+    const draft = pendingDraftRef.current
+    if (!draft) return
+    isInitLoadRef.current = true
+    setTemplateContent(draft.templateContent)
+    setProxyGroups(draft.proxyGroups)
+    setEnableRegionProxyGroups(draft.enableRegionProxyGroups)
+    setTemplateVariables(draft.templateVariables)
+    setEditorTab(draft.editorTab)
+    setIsDirty(true)
+    setTimeout(() => { isInitLoadRef.current = false }, 50)
+    setIsDraftRecoveryOpen(false)
+    pendingDraftRef.current = null
+  }
+
+  const handleDiscardDraft = () => {
+    if (editingTemplateName) {
+      localStorage.removeItem(TEMPLATE_DRAFT_KEY_PREFIX + editingTemplateName)
+    }
+    setIsDraftRecoveryOpen(false)
+    pendingDraftRef.current = null
+  }
+
   // Region proxy group names for checking
   const regionGroupNames = getRegionProxyGroupNames()
 
@@ -396,7 +473,9 @@ function TemplatesV3Page() {
     const newGroups = [...proxyGroups]
     newGroups[index] = group
     setProxyGroups(newGroups)
-    setIsDirty(true)
+    if (!isInitLoadRef.current) {
+      setIsDirty(true)
+    }
   }
 
   // Handle proxy group delete
@@ -509,47 +588,75 @@ function TemplatesV3Page() {
             data={templates}
             getRowKey={(name) => name}
             emptyText="暂无模板，点击上方按钮创建"
+            mobileCard={{
+              header: (name) => <span className="font-medium text-base">{name}</span>,
+              actions: (name) => (
+                <div className="flex items-center gap-4 w-full justify-between px-2">
+                  <Button variant="ghost" size="sm" onClick={() => handleEdit(name)} className="flex-1">
+                    <Pencil className="h-4 w-4 mr-1.5" /> 编辑
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleListPreview(name)} className="flex-1">
+                    <Eye className="h-4 w-4 mr-1.5" /> 预览
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleDelete(name)} className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10">
+                    <Trash2 className="h-4 w-4 mr-1.5" /> 删除
+                  </Button>
+                </div>
+              )
+            }}
           />
         </CardContent>
       </Card>
 
       {/* Editor Dialog */}
       <Dialog open={isEditorOpen} onOpenChange={(open) => !open && handleCloseEditor()}>
-        <DialogContent className="!w-[85vw] !max-w-[85vw] h-[90vh] flex flex-col" showCloseButton={false}>
+        <DialogContent className={cn(
+          "h-[90vh] flex flex-col",
+          isMobile ? "!w-[95vw] !max-w-[95vw] p-4" : "!w-[85vw] !max-w-[85vw]"
+        )} showCloseButton={false}>
           <DialogHeader className="flex-shrink-0">
-            <div className="flex items-center justify-between">
+            <div className={cn(
+              "flex justify-between gap-4",
+              isMobile ? "flex-col items-start" : "items-center"
+            )}>
               <div>
-                <DialogTitle>{editingTemplateName}</DialogTitle>
+                <DialogTitle className="break-all">{editingTemplateName}</DialogTitle>
                 <DialogDescription>编辑模板配置</DialogDescription>
               </div>
-              <div className="flex items-center gap-2">
+              <div className={cn(
+                "flex items-center gap-2",
+                isMobile ? "w-full justify-between" : ""
+              )}>
                 {isDirty && <Badge variant="secondary">未保存</Badge>}
-                <Button onClick={handleSave} disabled={updateMutation.isPending}>
-                  <Save className="h-4 w-4 mr-2" />
-                  保存
-                </Button>
-                <Button variant="outline" onClick={handleCloseEditor}>
-                  关闭
-                </Button>
+                <div className="flex gap-2">
+                  <Button onClick={handleSave} disabled={updateMutation.isPending} size={isMobile ? "sm" : "default"}>
+                    <Save className="h-4 w-4 mr-1 sm:mr-2" />
+                    保存
+                  </Button>
+                  <Button variant="outline" onClick={handleCloseEditor} size={isMobile ? "sm" : "default"}>
+                    关闭
+                  </Button>
+                </div>
               </div>
             </div>
           </DialogHeader>
 
           {/* Mobile: Preview below save button */}
           {isMobile && (
-            <div className="flex-shrink-0 border-b pb-4">
+            <div className="flex-shrink-0 border-b pb-4 mt-2">
               <Collapsible open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
                 <CollapsibleTrigger asChild>
-                  <Button variant="outline" className="w-full">
+                  <Button variant="outline" className="w-full h-8 text-sm">
                     {isPreviewOpen ? '收起配置预览' : '展开配置预览'}
                   </Button>
                 </CollapsibleTrigger>
-                <CollapsibleContent className="mt-4">
+                <CollapsibleContent className="mt-4 h-[250px]">
                   <TemplatePreview
                     content={previewContent}
                     isLoading={isPreviewLoading}
                     onRefresh={handlePreview}
                     title="代理组配置"
+                    className="h-full"
                   />
                 </CollapsibleContent>
               </Collapsible>
@@ -557,26 +664,26 @@ function TemplatesV3Page() {
           )}
 
           <div className={cn(
-            "flex-1 flex gap-4 overflow-hidden",
+            "flex-1 flex gap-4 overflow-hidden mt-4",
             isMobile ? "flex-col" : "flex-row"
           )}>
             {/* Editor Panel - Left column on tablet/desktop */}
             <div className={cn(
               "flex flex-col overflow-hidden",
-              isMobile ? "flex-1" : isTablet ? "w-[55%]" : "w-[40%]"
+              isMobile ? "w-full flex-1" : isTablet ? "w-[55%]" : "w-[40%]"
             )}>
-              <Tabs value={editorTab} onValueChange={handleTabChange} className="flex flex-col h-full">
-                <TabsList className="flex-shrink-0">
+              <Tabs value={editorTab} onValueChange={handleTabChange} className="flex flex-col h-full overflow-hidden">
+                <TabsList className="flex-shrink-0 w-full grid grid-cols-2">
                   <TabsTrigger value="visual">可视化编辑</TabsTrigger>
                   <TabsTrigger value="yaml">YAML 代码</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="visual" className="flex-1 overflow-hidden mt-4">
-                  <ScrollArea className="h-full pr-4">
-                    <div className="space-y-3">
+                <TabsContent value="visual" className="flex-1 min-h-0 overflow-hidden mt-4 flex flex-col data-[state=inactive]:hidden">
+                  <ScrollArea className="flex-1 h-full">
+                    <div className="space-y-3 pb-4 pr-3">
                       {/* Region Proxy Groups Toggle */}
                       <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/30">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                           <Label htmlFor="region-toggle" className="font-medium">开启区域代理组</Label>
                           <span className="text-xs text-muted-foreground">自动添加按地区分类的代理组</span>
                         </div>
@@ -601,9 +708,10 @@ function TemplatesV3Page() {
                           isLast={index === proxyGroups.length - 1}
                           showRegionToggle={enableRegionProxyGroups}
                           isRegionGroup={regionGroupNames.includes(group.name)}
+                          variables={templateVariables}
                         />
                       ))}
-                      <Button variant="outline" className="w-full" onClick={handleAddProxyGroup}>
+                      <Button variant="outline" className="w-full mt-2" onClick={handleAddProxyGroup}>
                         <Plus className="h-4 w-4 mr-2" />
                         添加代理组
                       </Button>
@@ -611,11 +719,11 @@ function TemplatesV3Page() {
                   </ScrollArea>
                 </TabsContent>
 
-                <TabsContent value="yaml" className="flex-1 overflow-hidden mt-4">
+                <TabsContent value="yaml" className="flex-1 min-h-0 overflow-hidden mt-4 flex flex-col data-[state=inactive]:hidden">
                   <Textarea
                     value={templateContent}
                     onChange={(e) => handleYamlChange(e.target.value)}
-                    className="h-full font-mono text-sm resize-none"
+                    className="flex-1 font-mono text-xs sm:text-sm resize-none p-4"
                     placeholder="YAML 内容..."
                   />
                 </TabsContent>
@@ -652,19 +760,22 @@ function TemplatesV3Page() {
 
       {/* List Preview Dialog */}
       <Dialog open={listPreviewOpen} onOpenChange={setListPreviewOpen}>
-        <DialogContent className="!w-[90vw] !max-w-[90vw] h-[85vh] flex flex-col" showCloseButton={false}>
+        <DialogContent className={cn(
+          "h-[85vh] flex flex-col",
+          isMobile ? "!w-[95vw] !max-w-[95vw] p-4" : "!w-[90vw] !max-w-[90vw]"
+        )} showCloseButton={false}>
           <DialogHeader className="flex-shrink-0">
             <div className="flex items-center justify-between">
               <div>
-                <DialogTitle>预览: {listPreviewTemplateName}</DialogTitle>
-                <DialogDescription>左侧为模板配置，右侧为最终订阅配置</DialogDescription>
+                <DialogTitle className="break-all truncate w-[200px] sm:w-auto">预览: {listPreviewTemplateName}</DialogTitle>
+                <DialogDescription className="hidden sm:block">左侧为模板配置，右侧为最终订阅配置</DialogDescription>
               </div>
-              <Button variant="outline" onClick={() => setListPreviewOpen(false)}>
+              <Button variant="outline" onClick={() => setListPreviewOpen(false)} size={isMobile ? "sm" : "default"}>
                 关闭
               </Button>
             </div>
           </DialogHeader>
-          <div className="flex-1 overflow-hidden flex gap-4">
+          <div className={cn("flex-1 overflow-hidden flex gap-4", isMobile ? "flex-col" : "flex-row")}>
             {listPreviewLoading ? (
               <div className="flex items-center justify-center w-full h-full">
                 <span className="text-muted-foreground">正在生成预览...</span>
@@ -672,22 +783,22 @@ function TemplatesV3Page() {
             ) : (
               <>
                 {/* Left: Template Config */}
-                <div className="w-1/2 flex flex-col overflow-hidden">
+                <div className={cn("flex flex-col overflow-hidden", isMobile ? "h-1/2 w-full" : "w-1/2")}>
                   <div className="text-sm font-medium mb-2 text-muted-foreground">模板配置</div>
                   <Card className="flex-1 overflow-hidden">
                     <ScrollArea className="h-full">
-                      <pre className="text-xs p-4 font-mono whitespace-pre-wrap break-all">
+                      <pre className="text-xs p-2 sm:p-4 font-mono whitespace-pre-wrap break-all">
                         {formatTemplateForDisplay(listPreviewTemplateContent)}
                       </pre>
                     </ScrollArea>
                   </Card>
                 </div>
                 {/* Right: Final Subscription Config */}
-                <div className="w-1/2 flex flex-col overflow-hidden">
+                <div className={cn("flex flex-col overflow-hidden", isMobile ? "h-1/2 w-full" : "w-1/2")}>
                   <div className="text-sm font-medium mb-2 text-muted-foreground">最终订阅配置</div>
                   <Card className="flex-1 overflow-hidden">
                     <ScrollArea className="h-full">
-                      <pre className="text-xs p-4 font-mono whitespace-pre-wrap break-all">
+                      <pre className="text-xs p-2 sm:p-4 font-mono whitespace-pre-wrap break-all">
                         {listPreviewContent}
                       </pre>
                     </ScrollArea>
@@ -762,6 +873,22 @@ function TemplatesV3Page() {
             <AlertDialogAction onClick={doCloseEditor}>
               确定关闭
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Draft Recovery Dialog */}
+      <AlertDialog open={isDraftRecoveryOpen} onOpenChange={setIsDraftRecoveryOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>恢复本地缓存</AlertDialogTitle>
+            <AlertDialogDescription>
+              检测到未保存的本地缓存，是否恢复？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleDiscardDraft}>放弃</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRecoverDraft}>恢复</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

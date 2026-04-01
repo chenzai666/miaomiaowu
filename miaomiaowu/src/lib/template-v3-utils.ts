@@ -65,6 +65,8 @@ export interface ProxyGroupV3Config {
   'interface-name'?: string
   'routing-mark'?: number
   'dialer-proxy-group'?: string
+  hidden?: boolean
+  icon?: string
 }
 
 // Parsed template structure
@@ -88,6 +90,8 @@ export interface ProxyGroupFormState {
   type: ProxyGroupType
   filterKeywords: string
   excludeFilterKeywords: string
+  filterFromVariable?: string       // 原始变量名（如 'FliterUS'），标识 filter 来自模板变量
+  excludeFilterFromVariable?: string
   includeTypes: ProxyType[]
   excludeTypes: ProxyType[]
   includeAll: boolean
@@ -101,6 +105,8 @@ export interface ProxyGroupFormState {
   interval: number
   tolerance: number
   dialerProxyGroup: string
+  hidden: boolean
+  icon: string
 }
 
 // Convert comma-separated keywords to regex pattern
@@ -111,6 +117,38 @@ export function keywordsToRegex(keywords: string): string {
     .map(k => k.trim())
     .filter(k => k.length > 0)
     .join('|')
+}
+
+// Clash/mihomo 标准顶级键（不视为自定义变量）
+const STANDARD_TOP_LEVEL_KEYS = new Set([
+  'port', 'socks-port', 'redir-port', 'tproxy-port',
+  'mixed-port', 'allow-lan', 'bind-address', 'mode',
+  'log-level', 'external-controller', 'external-ui',
+  'ipv6', 'dns', 'proxies', 'proxy-groups',
+  'proxy-providers', 'rules', 'rule-providers',
+  'hosts', 'profile', 'tun', 'sniffer',
+  'authentication', 'unified-delay', 'tcp-concurrent',
+  'find-process-mode', 'global-client-fingerprint',
+  'keep-alive-interval', 'geodata-mode', 'geo-auto-update',
+  'geo-update-interval', 'geox-url',
+  'add-region-proxy-groups',
+])
+
+// 从模板内容中提取自定义变量（非标准顶级键的标量字符串值）
+export function extractTemplateVariables(content: string): Record<string, string> {
+  try {
+    const parsed = parseYAML(content) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object') return {}
+    const vars: Record<string, string> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!STANDARD_TOP_LEVEL_KEYS.has(key) && typeof value === 'string') {
+        vars[key] = value
+      }
+    }
+    return vars
+  } catch {
+    return {}
+  }
 }
 
 // Convert regex pattern back to keywords (best effort)
@@ -139,6 +177,8 @@ export function createDefaultFormState(name = '新代理组'): ProxyGroupFormSta
     interval: 300,
     tolerance: 50,
     dialerProxyGroup: '',
+    hidden: false,
+    icon: '',
   }
 }
 
@@ -231,11 +271,14 @@ export function formStateToConfig(state: ProxyGroupFormState): ProxyGroupV3Confi
     config['dialer-proxy-group'] = state.dialerProxyGroup
   }
 
+  if (state.hidden) config.hidden = true
+  if (state.icon) config.icon = state.icon
+
   return config
 }
 
 // Convert ProxyGroupV3Config to ProxyGroupFormState
-export function configToFormState(config: ProxyGroupV3Config, allGroupNames: string[] = []): ProxyGroupFormState {
+export function configToFormState(config: ProxyGroupV3Config, allGroupNames: string[] = [], variables?: Record<string, string>): ProxyGroupFormState {
   // Separate proxy groups, markers, and static proxies
   const proxies = config.proxies || []
   const proxyOrder: string[] = []
@@ -252,15 +295,35 @@ export function configToFormState(config: ProxyGroupV3Config, allGroupNames: str
   }
 
   // include-all 等同于同时开启 include-all-proxies 和 include-all-providers
+  // __PROXY_NODES__ 占位符等同于 include-all-proxies
+  const hasNodesMarker = proxyOrder.includes(PROXY_NODES_MARKER)
+  const hasProvidersMarker = proxyOrder.includes(PROXY_PROVIDERS_MARKER)
   const includeAll = config['include-all'] || false
-  const includeAllProxies = config['include-all-proxies'] || includeAll
-  const includeAllProviders = config['include-all-providers'] || includeAll
+  const includeAllProxies = config['include-all-proxies'] || includeAll || hasNodesMarker
+  const includeAllProviders = config['include-all-providers'] || includeAll || hasProvidersMarker
+
+  // 解析 filter 变量引用：如果 filter 值是自定义变量名，替换为变量值
+  let filterValue = config.filter || ''
+  let filterFromVariable: string | undefined
+  if (variables && filterValue && variables[filterValue]) {
+    filterFromVariable = filterValue
+    filterValue = variables[filterValue]
+  }
+
+  let excludeFilterValue = config['exclude-filter'] || ''
+  let excludeFilterFromVariable: string | undefined
+  if (variables && excludeFilterValue && variables[excludeFilterValue]) {
+    excludeFilterFromVariable = excludeFilterValue
+    excludeFilterValue = variables[excludeFilterValue]
+  }
 
   const state: ProxyGroupFormState = {
     name: config.name,
     type: config.type,
-    filterKeywords: regexToKeywords(config.filter || ''),
-    excludeFilterKeywords: regexToKeywords(config['exclude-filter'] || ''),
+    filterKeywords: regexToKeywords(filterValue),
+    excludeFilterKeywords: regexToKeywords(excludeFilterValue),
+    filterFromVariable,
+    excludeFilterFromVariable,
     includeTypes: (config['include-type']?.split('|').filter(t => PROXY_TYPES.includes(t as ProxyType)) || []) as ProxyType[],
     excludeTypes: (config['exclude-type']?.split('|').filter(t => PROXY_TYPES.includes(t as ProxyType)) || []) as ProxyType[],
     includeAll,
@@ -274,6 +337,8 @@ export function configToFormState(config: ProxyGroupV3Config, allGroupNames: str
     interval: config.interval || 300,
     tolerance: config.tolerance || 50,
     dialerProxyGroup: config['dialer-proxy-group'] || '',
+    hidden: config.hidden || false,
+    icon: config.icon || '',
   }
 
   // Add default markers if not present but should be shown
@@ -302,11 +367,13 @@ export function serializeTemplate(template: ParsedTemplate): string {
 }
 
 // Extract proxy groups from template content
-export function extractProxyGroups(content: string): ProxyGroupFormState[] {
+export function extractProxyGroups(content: string, variables?: Record<string, string>): ProxyGroupFormState[] {
   const template = parseTemplate(content)
   if (!template || !template['proxy-groups']) return []
+  // 如果未传入 variables，自动从内容中提取
+  const vars = variables ?? extractTemplateVariables(content)
   const allGroupNames = template['proxy-groups'].map(g => g.name)
-  return template['proxy-groups'].map(config => configToFormState(config, allGroupNames))
+  return template['proxy-groups'].map(config => configToFormState(config, allGroupNames, Object.keys(vars).length > 0 ? vars : undefined))
 }
 
 // Update proxy-groups in template content

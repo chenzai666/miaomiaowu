@@ -2,7 +2,6 @@ package substore
 
 import (
 	"log"
-	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -278,7 +277,7 @@ func countMatchingNodes(nodeNames []string, filter string) int {
 
 // matchesFilter checks if a name matches a filter pattern
 func matchesFilter(name, filter string) bool {
-	re, err := regexp.Compile("(?i)" + filter)
+	re, err := compileCompatibleRegex("(?i)" + filter)
 	if err != nil {
 		// Fallback to simple contains check
 		parts := strings.Split(filter, "|")

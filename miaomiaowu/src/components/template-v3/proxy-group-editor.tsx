@@ -5,7 +5,8 @@ import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { ChevronDown, ChevronUp, Trash2, GripVertical, Link2 } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ChevronDown, ChevronUp, Trash2, GripVertical, Link2, Variable, EyeOff } from 'lucide-react'
 import { useState } from 'react'
 import { KeywordFilterInput } from './keyword-filter-input'
 import { ProxyTypeSelect } from './proxy-type-select'
@@ -30,6 +31,7 @@ interface ProxyGroupEditorProps {
   isLast?: boolean
   showRegionToggle?: boolean
   isRegionGroup?: boolean
+  variables?: Record<string, string> // 模板自定义变量
 }
 
 const GROUP_TYPE_LABELS: Record<ProxyGroupType, string> = {
@@ -52,6 +54,7 @@ export function ProxyGroupEditor({
   isLast = false,
   showRegionToggle = true,
   isRegionGroup = false,
+  variables,
 }: ProxyGroupEditorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [showRelayPicker, setShowRelayPicker] = useState(false)
@@ -67,29 +70,40 @@ export function ProxyGroupEditor({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div className="border rounded-lg">
+      <div className={`border rounded-lg ${group.hidden ? 'opacity-60' : ''}`}>
         <CollapsibleTrigger asChild>
-          <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-accent/50">
-            <div className="flex items-center gap-3">
-              <GripVertical className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">{group.name}</span>
-              <Badge variant="outline" className="text-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 cursor-pointer hover:bg-accent/50 gap-3 sm:gap-0">
+            <div className="flex items-center justify-end flex-wrap gap-2 sm:gap-3 w-full sm:w-auto">
+              <GripVertical className="h-4 w-4 text-muted-foreground shrink-0" />
+              {group.icon && (
+                /^https?:\/\//.test(group.icon)
+                  ? <img src={group.icon} alt="" className="h-5 w-5 object-contain shrink-0" />
+                  : <span className="text-base leading-none shrink-0">{group.icon}</span>
+              )}
+              <span className="font-medium mr-auto truncate max-w-[150px] sm:max-w-none">{group.name}</span>
+              <Badge variant="outline" className="text-xs shrink-0">
                 {GROUP_TYPE_LABELS[group.type]}
               </Badge>
-              {group.filterKeywords && (
-                <Badge variant="secondary" className="text-xs">有过滤</Badge>
+              {group.hidden && (
+                <Badge variant="secondary" className="text-xs gap-1 shrink-0">
+                  <EyeOff className="h-3 w-3" />
+                  隐藏
+                </Badge>
               )}
+              {group.filterKeywords && (
+                <Badge variant="secondary" className="text-xs shrink-0">有过滤</Badge>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-1 w-full sm:w-auto border-t sm:border-0 pt-2 sm:pt-0">
               {group.dialerProxyGroup && (
                 <Badge
                   variant="secondary"
-                  className="text-xs cursor-pointer hover:bg-secondary/80"
+                  className="text-xs cursor-pointer mr-auto hover:bg-secondary/80 shrink-0 truncate max-w-[100px] sm:max-w-[150px]"
                   onClick={(e) => { e.stopPropagation(); setShowRelayPicker(!showRelayPicker) }}
                 >
                   中转: {group.dialerProxyGroup}
                 </Badge>
               )}
-            </div>
-            <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="icon"
@@ -164,7 +178,7 @@ export function ProxyGroupEditor({
         )}
 
         <CollapsibleContent>
-          <div className="p-4 pt-0 space-y-4 border-t">
+          <div className="p-4 pt-0 space-y-4 border-t overflow-hidden">
             {/* Row 1: Name and Type */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -173,6 +187,7 @@ export function ProxyGroupEditor({
                   value={group.name}
                   onChange={(e) => updateField('name', e.target.value)}
                   placeholder="代理组名称"
+                  className="w-full"
                 />
               </div>
               <div className="space-y-2">
@@ -181,7 +196,7 @@ export function ProxyGroupEditor({
                   value={group.type}
                   onValueChange={(v) => updateField('type', v as ProxyGroupType)}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -254,16 +269,44 @@ export function ProxyGroupEditor({
             </div>
 
             {/* Row 2.5: Proxy Order (groups, nodes, providers) */}
-            <ProxyGroupSelect
-              label="代理顺序 (拖拽排序)"
-              value={group.proxyOrder}
-              onChange={(v) => updateField('proxyOrder', v)}
-              availableGroups={allGroupNames.filter(n => n !== group.name)}
-              showNodesMarker={hasProxyNodes(group)}
-              showProvidersMarker={hasProxyProviders(group)}
-              showRegionGroupsMarker={group.includeRegionProxyGroups}
-              placeholder="选择要引用的代理组"
-            />
+            <div className="overflow-hidden w-full max-w-full">
+              <ProxyGroupSelect
+                label="代理顺序 (拖拽排序)"
+                value={group.proxyOrder}
+                onChange={(v) => updateField('proxyOrder', v)}
+                availableGroups={allGroupNames.filter(n => n !== group.name)}
+                showNodesMarker={hasProxyNodes(group)}
+                showProvidersMarker={hasProxyProviders(group)}
+                showRegionGroupsMarker={group.includeRegionProxyGroups}
+                placeholder="选择要引用的代理组"
+              />
+            </div>
+
+            {/* 模板变量提示 */}
+            {variables && Object.keys(variables).length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="outline" className="text-xs cursor-help border-dashed border-amber-500 text-amber-600 dark:text-amber-400 gap-1 shrink-0">
+                        <Variable className="h-3 w-3 shrink-0" />
+                        模板变量 ({Object.keys(variables).length})
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[90vw] sm:max-w-md break-all">
+                      <div className="space-y-1 text-xs">
+                        {Object.entries(variables).map(([name, value]) => (
+                          <div key={name} className="flex gap-2">
+                            <span className="font-mono font-semibold shrink-0">{name}</span>
+                            <span className="truncate">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            )}
 
             {/* Row 3-4: Filter Keywords */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -271,15 +314,19 @@ export function ProxyGroupEditor({
                 label="筛选关键词 (filter)"
                 value={group.filterKeywords}
                 onChange={(v) => updateField('filterKeywords', v)}
+                onVariableCleared={() => updateField('filterFromVariable', undefined)}
                 placeholder="香港, HK, 港"
                 description="匹配节点名称，用逗号分隔"
+                fromVariable={group.filterFromVariable}
               />
               <KeywordFilterInput
                 label="排除关键词 (exclude-filter)"
                 value={group.excludeFilterKeywords}
                 onChange={(v) => updateField('excludeFilterKeywords', v)}
+                onVariableCleared={() => updateField('excludeFilterFromVariable', undefined)}
                 placeholder="游戏, IPLC"
                 description="排除匹配的节点"
+                fromVariable={group.excludeFilterFromVariable}
               />
             </div>
 
@@ -308,6 +355,7 @@ export function ProxyGroupEditor({
                     value={group.url}
                     onChange={(e) => updateField('url', e.target.value)}
                     placeholder="https://www.gstatic.com/generate_204"
+                    className="w-full"
                   />
                 </div>
                 <div className="space-y-2">
@@ -316,6 +364,7 @@ export function ProxyGroupEditor({
                     type="number"
                     value={group.interval}
                     onChange={(e) => updateField('interval', parseInt(e.target.value) || 300)}
+                    className="w-full"
                   />
                 </div>
                 {group.type !== 'load-balance' && (
@@ -325,11 +374,32 @@ export function ProxyGroupEditor({
                       type="number"
                       value={group.tolerance}
                       onChange={(e) => updateField('tolerance', parseInt(e.target.value) || 50)}
+                      className="w-full"
                     />
                   </div>
                 )}
               </div>
             )}
+
+            {/* Row 7: Icon and Hidden */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>图标 (icon)</Label>
+                <Input
+                  value={group.icon}
+                  onChange={(e) => updateField('icon', e.target.value)}
+                  placeholder="URL 或 emoji"
+                  className="w-full"
+                />
+              </div>
+              <div className="flex items-center gap-2 sm:pt-8">
+                <Switch
+                  checked={group.hidden}
+                  onCheckedChange={(v) => updateField('hidden', v)}
+                />
+                <span className="text-sm">隐藏此组 (hidden)</span>
+              </div>
+            </div>
           </div>
         </CollapsibleContent>
       </div>

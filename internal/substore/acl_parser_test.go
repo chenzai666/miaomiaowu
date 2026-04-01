@@ -159,3 +159,26 @@ func TestConvertRulesWithNoResolve(t *testing.T) {
 		t.Logf("  [%d]: %s", i, rule)
 	}
 }
+
+func TestIsRegexProxyPattern(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{name: "acl alternation", input: "(港|HK|Hong Kong)", want: true},
+		{name: "parenthesized simple regex", input: "(my)", want: true},
+		{name: "wildcard suffix", input: "my.*", want: true},
+		{name: "lookbehind pattern", input: "(?<!尼|-)日", want: true},
+		{name: "anchored regex", input: "^my-[0-9]+$", want: true},
+		{name: "plain proxy name", input: "🇭🇰 香港节点", want: false},
+		{name: "literal parentheses", input: "HK (01)", want: false},
+	}
+
+	for _, tt := range tests {
+		got := IsRegexProxyPattern(tt.input)
+		if got != tt.want {
+			t.Errorf("%s: IsRegexProxyPattern(%q) = %v, want %v", tt.name, tt.input, got, tt.want)
+		}
+	}
+}

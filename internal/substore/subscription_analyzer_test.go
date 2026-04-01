@@ -123,6 +123,8 @@ func TestMatchesFilter(t *testing.T) {
 		{"🇺🇸 美国 01", "美|US|USA", true},
 		{"🇯🇵 日本 01", "日|JP|Japan", true},
 		{"🇸🇬 新加坡 01", "新加坡|SG|Singapore", true},
+		{"xxx JP xxx", "🇯🇵|日本|(?<!尼|-)日|\\bJP(?:[-_ ]?\\d+(?:[-_ ]?[A-Za-z]{2,})?)?\\b|Japan", true},
+		{"印尼节点", "🇯🇵|日本|(?<!尼|-)日|\\bJP(?:[-_ ]?\\d+(?:[-_ ]?[A-Za-z]{2,})?)?\\b|Japan", false},
 		{"🇭🇰 香港 01", "美|US|USA", false},
 		{"Random Node", "港|HK|Hong Kong", false},
 	}

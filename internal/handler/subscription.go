@@ -1098,6 +1098,9 @@ func syncReferencedExternalSubscriptions(ctx context.Context, repo *storage.Traf
 	if err != nil {
 		// If settings not found, use default match rule
 		userSettings.MatchRule = "node_name"
+		userSettings.SyncScope = "saved_only"
+		userSettings.KeepNodeName = true
+		userSettings.NodeNameFilter = defaultNodeNameFilterPattern
 	}
 
 	logger.Info("[Subscription] 用户需要同步的外部订阅", "user", username, "count", len(subsToSync), "match_rule", userSettings.MatchRule)
@@ -1766,6 +1769,31 @@ func stripDialerProxyGroup(proxyGroupsNode *yaml.Node) {
 	}
 }
 
+// sortNodesByNodeOrder 根据用户配置的节点顺序对 storage.Node 切片进行排序
+func sortNodesByNodeOrder(nodes []storage.Node, nodeOrder []int64) {
+	if len(nodeOrder) == 0 || len(nodes) == 0 {
+		return
+	}
+
+	nodeIDToPosition := make(map[int64]int, len(nodeOrder))
+	for pos, nodeID := range nodeOrder {
+		nodeIDToPosition[nodeID] = pos
+	}
+
+	sort.SliceStable(nodes, func(i, j int) bool {
+		posI, foundI := nodeIDToPosition[nodes[i].ID]
+		posJ, foundJ := nodeIDToPosition[nodes[j].ID]
+
+		if !foundI {
+			return false
+		}
+		if !foundJ {
+			return true
+		}
+		return posI < posJ
+	})
+}
+
 // sortProxiesByNodeOrder 根据用户配置的节点顺序对 proxies 进行排序
 // nodeOrder 是节点 ID 的数组，proxiesNode 是 YAML 中的 proxies 序列节点
 func sortProxiesByNodeOrder(ctx context.Context, repo *storage.TrafficRepository, username string, proxiesNode *yaml.Node, nodeOrder []int64) error {
@@ -1902,6 +1930,11 @@ func (h *SubscriptionHandler) generateFromTemplate(ctx context.Context, username
 	nodes, err := h.repo.ListNodes(ctx, nodeOwner)
 	if err != nil {
 		return nil, fmt.Errorf("获取节点列表失败: %w", err)
+	}
+
+	// 按用户配置的节点顺序排序
+	if settings, err := h.repo.GetUserSettings(ctx, username); err == nil && len(settings.NodeOrder) > 0 {
+		sortNodesByNodeOrder(nodes, settings.NodeOrder)
 	}
 
 	// 构建选中标签的 map 用于快速查找

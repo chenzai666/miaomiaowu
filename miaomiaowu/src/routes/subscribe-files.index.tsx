@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { load as parseYAML, dump as dumpYAML } from 'js-yaml'
@@ -256,6 +256,7 @@ function formatTrafficGB(bytes: number): string {
 }
 
 function SubscribeFilesPage() {
+  const EDIT_NODES_DRAFT_KEY_PREFIX = 'mmw_edit_nodes_draft_'
   const { auth } = useAuthStore()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -311,6 +312,9 @@ function SubscribeFilesPage() {
   const [editingNodesFile, setEditingNodesFile] = useState<SubscribeFile | null>(null)
   const [proxyGroups, setProxyGroups] = useState<Array<{ name: string; type: string; proxies: string[]; use?: string[]; dialerProxyGroup?: string }>>([])
   const [showAllNodes, setShowAllNodes] = useState(true)
+  const [isNodesDraftRecoveryOpen, setIsNodesDraftRecoveryOpen] = useState(false)
+  const pendingNodesDraftRef = useRef<any>(null)
+  const proxyGroupsOriginalRef = useRef<string>('')
 
   // 编辑器状态
   const [editorValue, setEditorValue] = useState('')
@@ -1399,12 +1403,58 @@ function SubscribeFilesPage() {
           dialerProxyGroup: group['dialer-proxy-group'] || undefined,
         }))
         setProxyGroups(groups)
+        proxyGroupsOriginalRef.current = JSON.stringify(groups)
+
+        // Check for local draft
+        if (editingNodesFile) {
+          const draftJson = localStorage.getItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
+          if (draftJson) {
+            try {
+              const draft = JSON.parse(draftJson)
+              if (JSON.stringify(draft.proxyGroups) !== JSON.stringify(groups)) {
+                pendingNodesDraftRef.current = draft
+                setIsNodesDraftRecoveryOpen(true)
+              } else {
+                localStorage.removeItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
+              }
+            } catch {
+              localStorage.removeItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('解析YAML失败:', error)
       toast.error('解析配置文件失败')
     }
   }, [nodesConfigQuery.data])
+
+  // Write edit-nodes draft to localStorage when proxyGroups change
+  useEffect(() => {
+    if (!editNodesDialogOpen || !editingNodesFile) return
+    const current = JSON.stringify(proxyGroups)
+    if (current === proxyGroupsOriginalRef.current) return
+    localStorage.setItem(
+      EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id,
+      JSON.stringify({ proxyGroups, savedAt: Date.now() })
+    )
+  }, [proxyGroups, editNodesDialogOpen, editingNodesFile])
+
+  const handleRecoverNodesDraft = () => {
+    const draft = pendingNodesDraftRef.current
+    if (!draft) return
+    setProxyGroups(draft.proxyGroups)
+    setIsNodesDraftRecoveryOpen(false)
+    pendingNodesDraftRef.current = null
+  }
+
+  const handleDiscardNodesDraft = () => {
+    if (editingNodesFile) {
+      localStorage.removeItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
+    }
+    setIsNodesDraftRecoveryOpen(false)
+    pendingNodesDraftRef.current = null
+  }
 
   const handleEdit = (file: SubscribeFile) => {
     setEditingFile(file)
@@ -1657,6 +1707,9 @@ function SubscribeFilesPage() {
 
       // 只关闭替换对话框，不关闭编辑节点对话框
       setMissingNodesDialogOpen(false)
+      if (editingNodesFile) {
+        localStorage.removeItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
+      }
       toast.success(`已将缺失节点替换为 ${replacementChoice}`)
     } catch (error) {
       const message = error instanceof Error ? error.message : '应用替换失败'
@@ -2183,6 +2236,9 @@ function SubscribeFilesPage() {
         setConfigContent(newContent)
         // 只关闭编辑节点对话框，不保存到文件
         setEditNodesDialogOpen(false)
+        if (editingNodesFile) {
+          localStorage.removeItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
+        }
         toast.success('已应用节点配置')
       }
     } catch (error) {
@@ -2687,14 +2743,21 @@ function SubscribeFilesPage() {
                   {
                     header: '规则同步',
                     cell: (file) => (
-                      <Switch
-                        checked={file.auto_sync_custom_rules || false}
-                        onCheckedChange={(checked) => handleToggleAutoSync(file.id, checked)}
-                      />
+                      <div className='flex items-center gap-2'>
+                        {/* 有点绕, 如果绑定了模板, 则选中状态为false, 未绑定模板v3则选中状态以auto_sync_custom_rules为准 */}
+                        <Switch
+                          checked={!!file.template_filename ? false : (file.auto_sync_custom_rules || false)}
+                          onCheckedChange={(checked) => handleToggleAutoSync(file.id, checked)}
+                          disabled={!!file.template_filename}
+                        />
+                        {file.template_filename && (
+                          <span className='text-xs text-muted-foreground'>模板接管</span>
+                        )}
+                      </div>
                     ),
                     headerClassName: 'text-center',
                     cellClassName: 'text-center',
-                    width: '90px'
+                    width: '120px'
                   },
                   {
                     header: '自定义连接',
@@ -4589,6 +4652,22 @@ function SubscribeFilesPage() {
           proxyProviderConfigs={enableProxyProvider ? proxyProviderConfigs : []}
         />
       )}
+
+      {/* 编辑节点草稿恢复对话框 */}
+      <AlertDialog open={isNodesDraftRecoveryOpen} onOpenChange={setIsNodesDraftRecoveryOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>恢复本地缓存</AlertDialogTitle>
+            <AlertDialogDescription>
+              检测到未保存的节点编辑缓存，是否恢复？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleDiscardNodesDraft}>放弃</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRecoverNodesDraft}>恢复</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* 批量删除代理集合确认对话框 */}
       <AlertDialog open={batchDeleteDialogOpen} onOpenChange={setBatchDeleteDialogOpen}>
