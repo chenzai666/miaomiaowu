@@ -266,20 +266,35 @@ func (h *TrafficSummaryHandler) syncAndFetchExternalSubscriptionTraffic(ctx cont
 			continue
 		}
 
-		// Add traffic from this subscription
+		// Skip subscriptions with traffic mode "none"
+		if strings.ToLower(strings.TrimSpace(updatedSub.TrafficMode)) == "none" {
+			logger.Info("[流量记录] 跳过不统计订阅", "name", updatedSub.Name)
+			continue
+		}
+
+		// Add traffic from this subscription based on TrafficMode
+		var used int64
+		switch strings.ToLower(strings.TrimSpace(updatedSub.TrafficMode)) {
+		case "download":
+			used = updatedSub.Download
+		case "upload":
+			used = updatedSub.Upload
+		default: // "both" or empty
+			used = updatedSub.Upload + updatedSub.Download
+		}
 		totalLimit += updatedSub.Total
-		totalUsed += updatedSub.Upload + updatedSub.Download
+		totalUsed += used
 
 		if updatedSub.Expire == nil {
 			logger.Info("[流量记录] 添加长期订阅流量",
 				"name", updatedSub.Name,
 				"limit_gb", bytesToGigabytes(updatedSub.Total),
-				"used_gb", bytesToGigabytes(updatedSub.Upload+updatedSub.Download))
+				"used_gb", bytesToGigabytes(used))
 		} else {
 			logger.Info("[流量记录] 添加订阅流量",
 				"name", updatedSub.Name,
 				"limit_gb", bytesToGigabytes(updatedSub.Total),
-				"used_gb", bytesToGigabytes(updatedSub.Upload+updatedSub.Download),
+				"used_gb", bytesToGigabytes(used),
 				"expires", updatedSub.Expire.Format("2006-01-02 15:04:05"))
 		}
 	}
@@ -1171,17 +1186,32 @@ func (h *TrafficSummaryHandler) fetchExternalSubscriptionTraffic(ctx context.Con
 			continue
 		}
 
-		// Add traffic from this subscription
+		// Skip subscriptions with traffic mode "none"
+		if strings.ToLower(strings.TrimSpace(sub.TrafficMode)) == "none" {
+			logger.Info("[流量] 跳过不统计订阅", "name", sub.Name)
+			continue
+		}
+
+		// Add traffic from this subscription based on TrafficMode
+		var used int64
+		switch strings.ToLower(strings.TrimSpace(sub.TrafficMode)) {
+		case "download":
+			used = sub.Download
+		case "upload":
+			used = sub.Upload
+		default: // "both" or empty
+			used = sub.Upload + sub.Download
+		}
 		totalLimit += sub.Total
-		totalUsed += sub.Upload + sub.Download
+		totalUsed += used
 
 		if sub.Expire == nil {
-			logger.Info("[流量] 添加长期订阅流量", "name", sub.Name, "limit", sub.Total, "used", sub.Upload+sub.Download)
+			logger.Info("[流量] 添加长期订阅流量", "name", sub.Name, "limit", sub.Total, "used", used)
 		} else {
 			logger.Info("[流量] 添加订阅流量",
 				"name", sub.Name,
 				"limit", sub.Total,
-				"used", sub.Upload+sub.Download,
+				"used", used,
 				"expires", sub.Expire.Format("2006-01-02 15:04:05"))
 		}
 	}

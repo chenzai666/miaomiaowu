@@ -559,6 +559,11 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 													logger.Info("[Subscription] 跳过已过期的外部订阅", "name", sub.Name, "expire", sub.Expire.Format("2006-01-02 15:04:05"))
 													continue
 												}
+												// 如果流量模式为 "none"，跳过此订阅
+												if sub.TrafficMode == "none" {
+													logger.Info("[Subscription] 跳过不统计外部订阅", "name", sub.Name)
+													continue
+												}
 												if sub.Expire == nil {
 													logger.Info("[Subscription] 添加长期外部订阅流量", "name", sub.Name, "upload", sub.Upload, "download", sub.Download, "total", sub.Total, "mode", sub.TrafficMode)
 												} else {
