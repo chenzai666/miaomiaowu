@@ -288,7 +288,7 @@ type ExternalSubscription struct {
 	Download    int64      // 已下载流量（字节）
 	Total       int64      // 总流量（字节）
 	Expire      *time.Time // 过期时间
-	TrafficMode string     // 流量统计方式: "download", "upload", "both"
+	TrafficMode string     // 流量统计方式: "download", "upload", "both", "none"
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

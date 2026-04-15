@@ -17,7 +17,7 @@ type externalSubscriptionRequest struct {
 	Name        string `json:"name"`
 	URL         string `json:"url"`
 	UserAgent   string `json:"user_agent"`
-	TrafficMode string `json:"traffic_mode"` // 流量统计方式: "download", "upload", "both"
+	TrafficMode string `json:"traffic_mode"` // 流量统计方式: "download", "upload", "both", "none"
 }
 
 type externalSubscriptionResponse struct {
@@ -31,7 +31,7 @@ type externalSubscriptionResponse struct {
 	Download    int64   `json:"download"`     // 已下载流量（字节）
 	Total       int64   `json:"total"`        // 总流量（字节）
 	Expire      *string `json:"expire"`       // 过期时间
-	TrafficMode string  `json:"traffic_mode"` // 流量统计方式: "download", "upload", "both"
+	TrafficMode string  `json:"traffic_mode"` // 流量统计方式: "download", "upload", "both", "none"
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
 }
