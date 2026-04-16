@@ -469,6 +469,7 @@ function NodesPage() {
   const [renderMode, setRenderMode] = useState<RenderMode>(() => getStoredRenderMode() ?? 'virtual')
   const [renderModeInitialized, setRenderModeInitialized] = useState(() => getStoredRenderMode() !== null)
   const [sortMode, setSortMode] = useState(false)
+  const nodeOrderSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const virtualListRef = useRef<HTMLDivElement>(null)
   const tableVirtualListRef = useRef<HTMLDivElement>(null)
 
@@ -673,6 +674,25 @@ function NodesPage() {
       toast.error('保存排序失败: ' + (error.response?.data?.error || error.message))
     }
   })
+
+  // Debounced 排序保存：先更新本地状态，延迟 3s 再调 API
+  const debouncedSaveNodeOrder = useCallback((newOrder: number[]) => {
+    setNodeOrder(newOrder)
+    if (nodeOrderSaveTimerRef.current) clearTimeout(nodeOrderSaveTimerRef.current)
+    nodeOrderSaveTimerRef.current = setTimeout(() => {
+      updateNodeOrderMutation.mutate(newOrder)
+      nodeOrderSaveTimerRef.current = null
+    }, 3000)
+  }, [updateNodeOrderMutation])
+
+  // 组件卸载或退出排序模式时，立即保存未提交的排序
+  useEffect(() => {
+    return () => {
+      if (nodeOrderSaveTimerRef.current) {
+        clearTimeout(nodeOrderSaveTimerRef.current)
+      }
+    }
+  }, [])
 
   // 获取探针服务器列表
   const { data: probeConfigResponse, refetch: refetchProbeConfig } = useQuery({
@@ -2430,8 +2450,7 @@ function NodesPage() {
         }
       }
 
-      setNodeOrder(newOrder)
-      updateNodeOrderMutation.mutate(newOrder)
+      debouncedSaveNodeOrder(newOrder)
     } else {
       // 单节点拖动（保持原有逻辑）
       const activeIndex = savedDisplayNodes.findIndex(n => n.id === active.id)
@@ -2440,10 +2459,9 @@ function NodesPage() {
       const currentIds = savedDisplayNodes.map(n => n.dbId!)
       const newOrderIds = arrayMove(currentIds, activeIndex, overIndex)
 
-      setNodeOrder(newOrderIds)
-      updateNodeOrderMutation.mutate(newOrderIds)
+      debouncedSaveNodeOrder(newOrderIds)
     }
-  }, [displayNodes, selectedNodeIds, updateNodeOrderMutation])
+  }, [displayNodes, selectedNodeIds, debouncedSaveNodeOrder])
 
   // 拖拽取消处理
   const handleDragCancel = useCallback(() => {
@@ -2491,9 +2509,8 @@ function NodesPage() {
       newOrder = [...restItems.slice(0, insertIdx + 1), ...movingItems, ...restItems.slice(insertIdx + 1)]
     }
 
-    setNodeOrder(newOrder)
-    updateNodeOrderMutation.mutate(newOrder)
-  }, [selectedNodeIds, nodeOrder, savedNodes, updateNodeOrderMutation])
+    debouncedSaveNodeOrder(newOrder)
+  }, [selectedNodeIds, nodeOrder, savedNodes, debouncedSaveNodeOrder])
 
   const filteredNodes = useMemo(() => {
     let nodes = displayNodes
@@ -2957,9 +2974,9 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           variant='default'
                           size='sm'
                           onClick={() => {
-                            // 获取选中节点的名称
-                            const selectedNodes = savedNodes.filter(n => selectedNodeIds.has(n.id))
-                            const names = selectedNodes.map(n => n.node_name).join('\n')
+                            // 按 displayNodes 顺序获取选中节点名称
+                            const selectedNodes = displayNodes.filter(n => n.isSaved && n.dbId && selectedNodeIds.has(n.dbId))
+                            const names = selectedNodes.map(n => n.name).join('\n')
                             setBatchRenameText(names)
                             setBatchRenameDialogOpen(true)
                           }}
@@ -3199,7 +3216,15 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           size='sm'
                           onClick={() => {
                             setSortMode(m => !m)
-                            if (sortMode) setSelectedNodeIds(new Set())
+                            if (sortMode) {
+                              setSelectedNodeIds(new Set())
+                              // 退出排序模式时，立即保存未提交的排序
+                              if (nodeOrderSaveTimerRef.current) {
+                                clearTimeout(nodeOrderSaveTimerRef.current)
+                                nodeOrderSaveTimerRef.current = null
+                                updateNodeOrderMutation.mutate(nodeOrder)
+                              }
+                            }
                           }}
                         >
                           <ArrowUpDown className='size-3.5 mr-1' />
@@ -6142,7 +6167,8 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
               <Button
                 onClick={() => {
                   const newNames = batchRenameText.split('\n').map(line => line.trim()).filter(line => line)
-                  const nodeIds = Array.from(selectedNodeIds)
+                  // 按 displayNodes 顺序获取选中节点 ID，与打开时一致
+                  const nodeIds = displayNodes.filter(n => n.isSaved && n.dbId && selectedNodeIds.has(n.dbId)).map(n => n.dbId!)
 
                   if (newNames.length === 0) {
                     toast.error('请输入节点名称')
