@@ -31,7 +31,7 @@ import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { Copy } from 'lucide-react'
-import { Upload, Download, Edit, Settings, FileText, Save, Trash2, RefreshCw, ChevronDown, ChevronUp, ExternalLink, Eye, Calendar as CalendarIcon, Plus, Check } from 'lucide-react'
+import { Upload, Download, Edit, Settings, FileText, Save, Trash2, RefreshCw, ChevronDown, ChevronUp, ExternalLink, Eye, Calendar as CalendarIcon, Plus, Check, Ban } from 'lucide-react'
 import { EditNodesDialog } from '@/components/edit-nodes-dialog'
 import { MobileEditNodesDialog } from '@/components/mobile-edit-nodes-dialog'
 import { Twemoji } from '@/components/twemoji'
@@ -89,7 +89,7 @@ type ExternalSubscription = {
   download: number
   total: number
   expire: string | null
-  traffic_mode: 'download' | 'upload' | 'both'
+  traffic_mode: 'download' | 'upload' | 'both' | 'none'
   created_at: string
   updated_at: string
 }
@@ -368,7 +368,7 @@ function SubscribeFilesPage() {
     name: '',
     url: '',
     user_agent: '',
-    traffic_mode: 'both' as 'download' | 'upload' | 'both'
+    traffic_mode: 'both' as 'download' | 'upload' | 'both' | 'none'
   })
 
   // 代理集合对话框状态
@@ -3349,10 +3349,62 @@ function SubscribeFilesPage() {
                         }
                         // 根据 traffic_mode 计算已用流量
                         const mode = sub.traffic_mode || 'both'
+                        const modeLabel = mode === 'download' ? '仅下行' : mode === 'upload' ? '仅上行' : mode === 'none' ? '不统计' : '上下行'
+
+                        // 不统计模式：显示提示而不是进度条
+                        if (mode === 'none') {
+                          return (
+                            <div className='flex items-center gap-1'>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className='w-20 space-y-1 cursor-help'>
+                                    <div className='text-xs text-center text-muted-foreground'>
+                                      不统计
+                                    </div>
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent className='space-y-1'>
+                                  <div className='text-xs text-muted-foreground'>
+                                    统计方式: {modeLabel}
+                                  </div>
+                                  <div className='text-xs text-muted-foreground'>
+                                    此订阅的流量不计入总流量
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant='ghost'
+                                    size='icon'
+                                    className='h-6 w-6'
+                                    onClick={() => {
+                                      // 循环切换: both -> download -> upload -> none -> both
+                                      const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : mode === 'upload' ? 'none' : 'both'
+                                      updateExternalSubMutation.mutate({
+                                        id: sub.id,
+                                        name: sub.name,
+                                        url: sub.url,
+                                        user_agent: sub.user_agent,
+                                        traffic_mode: nextMode
+                                      })
+                                    }}
+                                    disabled={updateExternalSubMutation.isPending}
+                                  >
+                                    <Ban className='h-3 w-3' />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <span>切换统计方式: {modeLabel}</span>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                          )
+                        }
+
                         const used = mode === 'download' ? sub.download : mode === 'upload' ? sub.upload : sub.upload + sub.download
                         const percentage = Math.min((used / sub.total) * 100, 100)
                         const remaining = Math.max(sub.total - used, 0)
-                        const modeLabel = mode === 'download' ? '仅下行' : mode === 'upload' ? '仅上行' : '上下行'
                         return (
                           <div className='flex items-center gap-1'>
                             <Tooltip>
@@ -3393,8 +3445,8 @@ function SubscribeFilesPage() {
                                   size='icon'
                                   className='h-6 w-6'
                                   onClick={() => {
-                                    // 循环切换: both -> download -> upload -> both
-                                    const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : 'both'
+                                    // 循环切换: both -> download -> upload -> none -> both
+                                    const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : mode === 'upload' ? 'none' : 'both'
                                     updateExternalSubMutation.mutate({
                                       id: sub.id,
                                       name: sub.name,
@@ -3608,7 +3660,7 @@ function SubscribeFilesPage() {
                           const used = mode === 'download' ? sub.download : mode === 'upload' ? sub.upload : sub.upload + sub.download
                           const percentage = Math.min((used / sub.total) * 100, 100)
                           const remaining = Math.max(sub.total - used, 0)
-                          const modeLabel = mode === 'download' ? '仅下行' : mode === 'upload' ? '仅上行' : '上下行'
+                          const modeLabel = mode === 'download' ? '仅下行' : mode === 'upload' ? '仅上行' : mode === 'none' ? '不统计' : '上下行'
                           return (
                             <div className='flex items-center gap-2'>
                               <Tooltip>
@@ -3646,8 +3698,8 @@ function SubscribeFilesPage() {
                                     className='h-6 w-6 shrink-0'
                                     onClick={(e) => {
                                       e.stopPropagation()
-                                      // 循环切换: both -> download -> upload -> both
-                                      const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : 'both'
+                                      // 循环切换: both -> download -> upload -> none -> both
+                                      const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : mode === 'upload' ? 'none' :  'both'
                                       updateExternalSubMutation.mutate({
                                         id: sub.id,
                                         name: sub.name,
@@ -5505,7 +5557,7 @@ function SubscribeFilesPage() {
               <Label>流量统计方式</Label>
               <Select
                 value={editExternalSubForm.traffic_mode}
-                onValueChange={(value: 'download' | 'upload' | 'both') => setEditExternalSubForm(prev => ({ ...prev, traffic_mode: value }))}
+                onValueChange={(value: 'download' | 'upload' | 'both' | 'none') => setEditExternalSubForm(prev => ({ ...prev, traffic_mode: value }))}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -5514,6 +5566,7 @@ function SubscribeFilesPage() {
                   <SelectItem value='both'>上下行 (download + upload)</SelectItem>
                   <SelectItem value='download'>仅下行 (download)</SelectItem>
                   <SelectItem value='upload'>仅上行 (upload)</SelectItem>
+                  <SelectItem value='none'>不统计 (none)</SelectItem>
                 </SelectContent>
               </Select>
               <p className='text-xs text-muted-foreground'>
