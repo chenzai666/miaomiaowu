@@ -4603,14 +4603,14 @@ function SubscribeFilesPage() {
           setMetadataForm({ name: '', description: '', filename: '', template_filename: '', selected_tags: [], expire: undefined, traffic_limit: '', stats_server_ids: '' })
         }
       }}>
-        <DialogContent className='sm:max-w-lg'>
+        <DialogContent className='sm:max-w-lg max-h-[90vh] flex flex-col'>
           <DialogHeader>
             <DialogTitle>编辑订阅信息</DialogTitle>
             <DialogDescription>
               修改订阅名称、说明和文件名
             </DialogDescription>
           </DialogHeader>
-          <div className='space-y-4 py-4'>
+          <div className='space-y-4 py-4 overflow-y-auto flex-1'>
             <div className='space-y-2'>
               <Label htmlFor='metadata-name'>订阅名称 *</Label>
               <Input
