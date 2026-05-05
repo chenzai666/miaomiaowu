@@ -4610,7 +4610,7 @@ function SubscribeFilesPage() {
               修改订阅名称、说明和文件名
             </DialogDescription>
           </DialogHeader>
-          <div className='space-y-4 py-4 overflow-y-auto flex-1'>
+          <div className='space-y-4 py-4 overflow-y-auto flex-1 min-h-0'>
             <div className='space-y-2'>
               <Label htmlFor='metadata-name'>订阅名称 *</Label>
               <Input
@@ -4834,7 +4834,7 @@ function SubscribeFilesPage() {
               )}
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className='shrink-0'>
             <Button
               variant='outline'
               onClick={() => setEditMetadataDialogOpen(false)}
