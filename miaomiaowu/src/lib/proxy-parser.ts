@@ -816,7 +816,7 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
     const atIndex = authAndServer.lastIndexOf('@')
     if (atIndex === -1) return null
 
-    const password = authAndServer.substring(0, atIndex)
+    const password = safeDecodeURIComponent(authAndServer.substring(0, atIndex))
     const serverPart = authAndServer.substring(atIndex + 1)
 
     let server = ''
