@@ -534,6 +534,7 @@ func (p *StashProducer) generateFullConfig(proxies []Proxy, opts *ProduceOptions
 	var proxyGroups, rules interface{}
 	var ruleProviders map[string]interface{}
 	var defaultNameserver, nameserver []interface{}
+	var nameserverPolicy map[string]interface{}
 
 	if opts != nil && opts.FullConfig != nil {
 		proxyGroups = opts.FullConfig["proxy-groups"]
@@ -551,6 +552,15 @@ func (p *StashProducer) generateFullConfig(proxies []Proxy, opts *ProduceOptions
 			}
 			if ns, ok := dns["nameserver"].([]interface{}); ok {
 				nameserver = ns
+			}
+			// Stash doesn't support direct-nameserver / proxy-server-nameserver,
+			// merge their values into nameserver (deduplicated).
+			nameserver = mergeNameservers(nameserver,
+				dns["direct-nameserver"],
+				dns["proxy-server-nameserver"],
+			)
+			if nsp, ok := dns["nameserver-policy"].(map[string]interface{}); ok {
+				nameserverPolicy = p.expandNameserverPolicy(nsp)
 			}
 		}
 	}
@@ -745,6 +755,37 @@ func (p *StashProducer) generateFullConfig(proxies []Proxy, opts *ProduceOptions
 		}
 	}
 
+	// nameserver-policy (keys sorted for stable output)
+	if len(nameserverPolicy) > 0 {
+		sb.WriteString("  nameserver-policy:\n")
+		sortedKeys := make([]string, 0, len(nameserverPolicy))
+		for key := range nameserverPolicy {
+			sortedKeys = append(sortedKeys, key)
+		}
+		for i := 0; i < len(sortedKeys); i++ {
+			for j := i + 1; j < len(sortedKeys); j++ {
+				if sortedKeys[i] > sortedKeys[j] {
+					sortedKeys[i], sortedKeys[j] = sortedKeys[j], sortedKeys[i]
+				}
+			}
+		}
+		for _, key := range sortedKeys {
+			val := nameserverPolicy[key]
+			sb.WriteString("    ")
+			sb.WriteString(key)
+			sb.WriteString(":\n")
+			if servers, ok := val.([]interface{}); ok {
+				for _, s := range servers {
+					if sStr, ok := s.(string); ok {
+						sb.WriteString("      - ")
+						sb.WriteString(sStr)
+						sb.WriteString("\n")
+					}
+				}
+			}
+		}
+	}
+
 	// Fixed DNS settings for Stash
 	sb.WriteString("  skip-cert-verify: true\n")
 	sb.WriteString("  fake-ip-filter:\n")
@@ -765,6 +806,50 @@ func (p *StashProducer) generateFullConfig(proxies []Proxy, opts *ProduceOptions
 	sb.WriteString("mode: rule\n")
 
 	return sb.String()
+}
+
+// mergeNameservers appends values from extra nameserver lists into base, skipping duplicates.
+func mergeNameservers(base []interface{}, extras ...interface{}) []interface{} {
+	seen := make(map[string]bool, len(base))
+	for _, v := range base {
+		if s, ok := v.(string); ok {
+			seen[s] = true
+		}
+	}
+	for _, extra := range extras {
+		if list, ok := extra.([]interface{}); ok {
+			for _, v := range list {
+				if s, ok := v.(string); ok && !seen[s] {
+					seen[s] = true
+					base = append(base, v)
+				}
+			}
+		}
+	}
+	return base
+}
+
+// expandNameserverPolicy expands comma-separated geosite keys into individual entries.
+// Stash only supports one geosite per key, e.g. "geosite:cn,private" becomes
+// two entries: "geosite:cn" and "geosite:private".
+func (p *StashProducer) expandNameserverPolicy(policy map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for key, val := range policy {
+		trimmedKey := strings.TrimSpace(key)
+		if strings.HasPrefix(trimmedKey, "geosite:") && strings.Contains(trimmedKey, ",") {
+			suffix := strings.TrimPrefix(trimmedKey, "geosite:")
+			parts := strings.Split(suffix, ",")
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					result["geosite:"+part] = val
+				}
+			}
+		} else {
+			result[trimmedKey] = val
+		}
+	}
+	return result
 }
 
 func (p *StashProducer) isSupportedType(proxyType string) bool {
