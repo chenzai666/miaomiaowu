@@ -99,7 +99,7 @@ export function UserMenu() {
   }
 
   const displayName = profile?.nickname || profile?.username || '用户'
-  const fallbackAvatar = profile?.is_admin ? '/images/admin-avatar.webp' : '/images/user-avatar.png'
+  const fallbackAvatar = profile?.is_admin ? `${import.meta.env.BASE_URL}images/admin-avatar.webp` : `${import.meta.env.BASE_URL}images/user-avatar.png`
   const avatarSrc = profile?.avatar_url?.trim() ? profile.avatar_url.trim() : fallbackAvatar
   const fallbackText = displayName.slice(0, 2)
   const emailText = profile?.email?.trim()

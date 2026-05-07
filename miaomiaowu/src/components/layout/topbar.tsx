@@ -181,7 +181,7 @@ export function Topbar() {
             className='flex items-center gap-3 font-semibold text-lg tracking-tight transition hover:text-primary outline-none focus:outline-none shrink-0'
           >
             <img
-              src='/images/logo.webp'
+              src={`${import.meta.env.BASE_URL}images/logo.webp`}
               alt='妙妙屋 Logo'
               className='h-10 w-10 border-2 border-[color:rgba(241,140,110,0.4)] shadow-[4px_4px_0_rgba(0,0,0,0.2)] shrink-0'
             />
