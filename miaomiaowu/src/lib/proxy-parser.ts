@@ -1089,6 +1089,55 @@ function parseGenericProtocol(url: string, protocol: string): ProxyNode | null {
           node['min-idle-session'] = parseInt(queryParams.minIdleSession)
         }
         break
+
+      case 'naive':
+        {
+          const colonIndex = password.indexOf(':')
+          if (colonIndex !== -1) {
+            node.username = password.substring(0, colonIndex)
+            node.password = password.substring(colonIndex + 1)
+          } else {
+            node.username = password
+            node.password = ''
+          }
+        }
+        if (queryParams.sni) {
+          node.sni = safeDecodeURIComponent(queryParams.sni)
+        }
+        node['udp-over-tcp'] = queryParams.uot === '1'
+        if (queryParams.header) {
+          const headerColonIndex = queryParams.header.indexOf(':')
+          if (headerColonIndex !== -1) {
+            const headerKey = queryParams.header.substring(0, headerColonIndex)
+            const headerValue = queryParams.header.substring(headerColonIndex + 1)
+            node['extra-headers'] = { [headerKey]: headerValue }
+          }
+        }
+        break
+
+      case 'mieru':
+        {
+          const colonIndex = password.indexOf(':')
+          if (colonIndex !== -1) {
+            node.username = password.substring(0, colonIndex)
+            node.password = password.substring(colonIndex + 1)
+          } else {
+            node.username = password
+            node.password = ''
+          }
+        }
+        node.transport = queryParams.transport || queryParams['handshake-mode'] || 'TCP'
+        node.multiplexing = queryParams.multiplexing || 'MULTIPLEXING_LOW'
+        if (queryParams.mtu) {
+          node.mtu = parseInt(queryParams.mtu)
+        }
+        if (queryParams['port-range']) {
+          node['port-range'] = queryParams['port-range']
+        }
+        if (queryParams['traffic-pattern']) {
+          node['traffic-pattern'] = queryParams['traffic-pattern']
+        }
+        break
     }
     // ip-version解析
     if (queryParams["ip-version"]) {
@@ -1252,6 +1301,10 @@ export function parseProxyUrl(url: string): ProxyNode | null {
     return parseGenericProtocol(url, 'tuic')
   } else if (url.startsWith('anytls://')) {
     return parseGenericProtocol(url, 'anytls')
+  } else if (url.startsWith('naive://')) {
+    return parseGenericProtocol(url, 'naive')
+  } else if (url.startsWith('mieru://')) {
+    return parseGenericProtocol(url, 'mieru')
   } else if (url.startsWith('wireguard://') || url.startsWith('wg://')) {
     return parseWireGuard(url)
   }
