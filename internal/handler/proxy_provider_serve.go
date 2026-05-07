@@ -483,6 +483,10 @@ func parseProxyURI(uri string) (map[string]interface{}, error) {
 		return parseAnytlsURI(uri)
 	case strings.HasPrefix(uri, "socks://"), strings.HasPrefix(uri, "socks5://"):
 		return parseSocksURI(uri)
+	case strings.HasPrefix(uri, "naive://"):
+		return parseNaiveURI(uri)
+	case strings.HasPrefix(uri, "mieru://"):
+		return parseMieruURI(uri)
 	default:
 		return nil, fmt.Errorf("unsupported protocol")
 	}
@@ -2113,4 +2117,165 @@ func RefreshProxyProviderCache(sub *storage.ExternalSubscription, config *storag
 
 	logger.Info("[RefreshProxyProviderCache] 刷新缓存成功", "id", config.ID, "node_count", len(proxiesRaw))
 	return entry, nil
+}
+
+// parseNaiveURI 解析 naive:// URI
+// 格式: naive://uuid:password@server:port/?security=tls&sni=xxx&uot=1&header=key:value#name
+func parseNaiveURI(uri string) (map[string]interface{}, error) {
+	content := strings.TrimPrefix(uri, "naive://")
+
+	name := "Naive Node"
+	if idx := strings.LastIndex(content, "#"); idx != -1 {
+		name = urlDecode(content[idx+1:])
+		content = content[:idx]
+	}
+
+	params := make(map[string]string)
+	if idx := strings.Index(content, "?"); idx != -1 {
+		paramStr := content[idx+1:]
+		content = content[:idx]
+		for _, kv := range strings.Split(paramStr, "&") {
+			if parts := strings.SplitN(kv, "=", 2); len(parts) == 2 {
+				params[parts[0]] = urlDecode(parts[1])
+			}
+		}
+	}
+
+	content = strings.TrimSuffix(content, "/")
+
+	atIdx := strings.LastIndex(content, "@")
+	if atIdx == -1 {
+		return nil, fmt.Errorf("invalid naive uri: missing @")
+	}
+
+	auth := urlDecode(content[:atIdx])
+	serverPort := content[atIdx+1:]
+
+	server, port := parseServerPort(serverPort)
+	if server == "" {
+		return nil, fmt.Errorf("invalid naive uri: invalid server")
+	}
+	if port == 0 {
+		port = 443
+	}
+
+	var username, password string
+	if colonIdx := strings.Index(auth, ":"); colonIdx != -1 {
+		username = auth[:colonIdx]
+		password = auth[colonIdx+1:]
+	} else {
+		username = auth
+	}
+
+	proxy := map[string]interface{}{
+		"type":     "naive",
+		"name":     name,
+		"server":   server,
+		"port":     port,
+		"username": username,
+		"password": password,
+	}
+
+	if sni := params["sni"]; sni != "" {
+		proxy["sni"] = sni
+	}
+	if params["uot"] == "1" {
+		proxy["udp-over-tcp"] = true
+	}
+	if header := params["header"]; header != "" {
+		if colonIdx := strings.Index(header, ":"); colonIdx != -1 {
+			key := header[:colonIdx]
+			value := header[colonIdx+1:]
+			proxy["extra-headers"] = map[string]interface{}{key: value}
+		}
+	}
+
+	return proxy, nil
+}
+
+// parseMieruURI 解析 mieru:// URI
+// 格式: mieru://username:password@server:port/?transport=TCP&multiplexing=MULTIPLEXING_LOW&mtu=1400#name
+func parseMieruURI(uri string) (map[string]interface{}, error) {
+	content := strings.TrimPrefix(uri, "mieru://")
+
+	name := "Mieru Node"
+	if idx := strings.LastIndex(content, "#"); idx != -1 {
+		name = urlDecode(content[idx+1:])
+		content = content[:idx]
+	}
+
+	params := make(map[string]string)
+	if idx := strings.Index(content, "?"); idx != -1 {
+		paramStr := content[idx+1:]
+		content = content[:idx]
+		for _, kv := range strings.Split(paramStr, "&") {
+			if parts := strings.SplitN(kv, "=", 2); len(parts) == 2 {
+				params[parts[0]] = urlDecode(parts[1])
+			}
+		}
+	}
+
+	content = strings.TrimSuffix(content, "/")
+
+	atIdx := strings.LastIndex(content, "@")
+	if atIdx == -1 {
+		return nil, fmt.Errorf("invalid mieru uri: missing @")
+	}
+
+	auth := urlDecode(content[:atIdx])
+	serverPort := content[atIdx+1:]
+
+	server, port := parseServerPort(serverPort)
+	if server == "" {
+		return nil, fmt.Errorf("invalid mieru uri: invalid server")
+	}
+
+	var username, password string
+	if colonIdx := strings.Index(auth, ":"); colonIdx != -1 {
+		username = auth[:colonIdx]
+		password = auth[colonIdx+1:]
+	} else {
+		username = auth
+	}
+
+	proxy := map[string]interface{}{
+		"type":     "mieru",
+		"name":     name,
+		"server":   server,
+		"username": username,
+		"password": password,
+	}
+
+	if port > 0 {
+		proxy["port"] = port
+	}
+	if portRange := params["port-range"]; portRange != "" {
+		proxy["port-range"] = portRange
+	}
+
+	transport := params["transport"]
+	if transport == "" {
+		transport = params["handshake-mode"]
+	}
+	if transport == "" {
+		transport = "TCP"
+	}
+	proxy["transport"] = transport
+
+	multiplexing := params["multiplexing"]
+	if multiplexing == "" {
+		multiplexing = "MULTIPLEXING_LOW"
+	}
+	proxy["multiplexing"] = multiplexing
+
+	if mtu := params["mtu"]; mtu != "" {
+		if mtuVal, err := strconv.Atoi(mtu); err == nil {
+			proxy["mtu"] = mtuVal
+		}
+	}
+	if tp := params["traffic-pattern"]; tp != "" {
+		proxy["traffic-pattern"] = tp
+	}
+
+	return proxy, nil
 }
