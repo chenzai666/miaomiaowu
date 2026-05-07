@@ -250,6 +250,13 @@ MIT License
 <details>
 <summary>更新日志</summary>
 
+### v0.6.6 (2026-05-07)
+- 🌈 静态资源使用相对路径支持子路径代理[#78](https://github.com/iluobei/miaomiaowu/issues/78)
+- 🌈 支持naive与mieru协议[#76](https://github.com/iluobei/miaomiaowu/issues/76)
+- 🛠️ fix:编辑订阅信息溢出屏幕
+- 🛠️ fix:hy2 sni和server相同时没有设置sni
+- 🛠️ fix:stash dns配置优化
+- 🛠️ fix:hy2 password没有urldecode[#77](https://github.com/iluobei/miaomiaowu/issues/77)
 ### v0.6.5 (2026-04-25)
 - 🛠️ fix:节点名称过滤的默认表达式无法删除[#70](https://github.com/iluobei/miaomiaowu/issues/70)
 - 🛠️ fix:订阅过期时间丢失
