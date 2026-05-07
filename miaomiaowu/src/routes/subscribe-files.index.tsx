@@ -304,6 +304,8 @@ function SubscribeFilesPage() {
   // 过期时间Popover状态
   const [expirePopoverFileId, setExpirePopoverFileId] = useState<number | null>(null)
   const [customDateFileId, setCustomDateFileId] = useState<number | null>(null)
+  const [mobileExpirePopoverFileId, setMobileExpirePopoverFileId] = useState<number | null>(null)
+  const [mobileCustomDateFileId, setMobileCustomDateFileId] = useState<number | null>(null)
 
   // 自定义连接Popover状态
   const [customLinkFileId, setCustomLinkFileId] = useState<number | null>(null)
@@ -3393,6 +3395,153 @@ function SubscribeFilesPage() {
                           <span className='text-xs'>{file.auto_sync_custom_rules ? '已启用' : '未启用'}</span>
                         </div>
                       )
+                    },
+                    {
+                      label: '过期时间',
+                      value: (file) => {
+                        const handleQuickExpire = (days: number | 'expired' | Date) => {
+                          let newExpireAt: string | null = null
+
+                          if (days === 'expired') {
+                            newExpireAt = new Date().toISOString()
+                          } else if (days instanceof Date) {
+                            newExpireAt = days.toISOString()
+                          } else {
+                            const baseDate = file.expire_at ? new Date(file.expire_at) : new Date()
+                            newExpireAt = addDays(baseDate, days).toISOString()
+                          }
+
+                          updateMetadataMutation.mutate({
+                            id: file.id,
+                            data: {
+                              name: file.name,
+                              description: file.description,
+                              auto_sync_custom_rules: file.auto_sync_custom_rules,
+                              expire_at: newExpireAt,
+                            }
+                          }, {
+                            onSuccess: () => {
+                              setMobileExpirePopoverFileId(null)
+                              setMobileCustomDateFileId(null)
+                              toast.success('过期时间已更新')
+                            }
+                          })
+                        }
+
+                        const getExpirationStatus = () => {
+                          if (!file.expire_at) return null
+                          const expireDate = new Date(file.expire_at)
+                          if (isToday(expireDate)) {
+                            return { status: 'expiring', label: '今天过期', className: 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400' }
+                          }
+                          if (isPast(expireDate)) {
+                            return { status: 'expired', label: '已过期', className: 'bg-red-500/10 text-red-700 dark:text-red-400' }
+                          }
+                          const daysRemaining = differenceInCalendarDays(expireDate, new Date())
+                          if (daysRemaining <= 7) {
+                            return { status: 'expiring', label: `${daysRemaining}天后过期`, className: 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400' }
+                          }
+                          return { status: 'valid', label: format(expireDate, 'yyyy-MM-dd HH:mm'), className: 'bg-green-500/10 text-green-700 dark:text-green-400' }
+                        }
+
+                        const expirationStatus = getExpirationStatus()
+
+                        return (
+                          <Popover
+                            open={mobileExpirePopoverFileId === file.id}
+                            onOpenChange={(open) => setMobileExpirePopoverFileId(open ? file.id : null)}
+                          >
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant='ghost'
+                                size='sm'
+                                className='h-auto px-0 py-0'
+                              >
+                                {expirationStatus ? (
+                                  <Badge variant='outline' className={expirationStatus.className}>
+                                    {expirationStatus.label}
+                                  </Badge>
+                                ) : (
+                                  <span className='text-xs text-muted-foreground'>未设置</span>
+                                )}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className='w-auto p-2' align='start'>
+                              <div className='flex flex-col gap-2'>
+                                <Button
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={() => handleQuickExpire(30)}
+                                  disabled={updateMetadataMutation.isPending}
+                                >
+                                  延长30天
+                                </Button>
+                                <Button
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={() => handleQuickExpire('expired')}
+                                  disabled={updateMetadataMutation.isPending}
+                                >
+                                  标记过期
+                                </Button>
+                                <Popover
+                                  open={mobileCustomDateFileId === file.id}
+                                  onOpenChange={(open) => setMobileCustomDateFileId(open ? file.id : null)}
+                                >
+                                  <PopoverTrigger asChild>
+                                    <Button
+                                      variant='outline'
+                                      size='sm'
+                                    >
+                                      <CalendarIcon className='mr-2 h-4 w-4' />
+                                      选择时间
+                                    </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className='w-auto p-0' align='start'>
+                                    <Calendar
+                                      mode='single'
+                                      selected={file.expire_at ? new Date(file.expire_at) : undefined}
+                                      onSelect={(date) => {
+                                        if (date) {
+                                          handleQuickExpire(date)
+                                        }
+                                      }}
+                                      disabled={(date) => date < new Date()}
+                                      initialFocus
+                                    />
+                                  </PopoverContent>
+                                </Popover>
+                                {file.expire_at && (
+                                  <Button
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={() => {
+                                      updateMetadataMutation.mutate({
+                                        id: file.id,
+                                        data: {
+                                          name: file.name,
+                                          description: file.description,
+                                          auto_sync_custom_rules: file.auto_sync_custom_rules,
+                                          expire_at: null,
+                                        }
+                                      }, {
+                                        onSuccess: () => {
+                                          setMobileExpirePopoverFileId(null)
+                                          toast.success('已清除过期时间')
+                                        }
+                                      })
+                                    }}
+                                    disabled={updateMetadataMutation.isPending}
+                                    className='text-destructive hover:text-destructive'
+                                  >
+                                    清除过期时间
+                                  </Button>
+                                )}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        )
+                      }
                     }
                   ],
                   actions: (file) => (
