@@ -7,31 +7,31 @@ import (
 
 // ClashConfig represents the structure of a Clash configuration
 type ClashConfig struct {
-	Port                int                       `yaml:"port"`
-	SocksPort           int                       `yaml:"socks-port"`
-	AllowLan            bool                      `yaml:"allow-lan"`
-	Mode                string                    `yaml:"mode"`
-	LogLevel            string                    `yaml:"log-level"`
-	ExternalController  string                    `yaml:"external-controller"`
-	DNS                 ClashDNS                  `yaml:"dns"`
-	Proxies             []map[string]any          `yaml:"proxies"`
-	ProxyGroups         []ClashProxyGroup         `yaml:"proxy-groups"`
-	Rules               []string                  `yaml:"rules"`
-	RuleProviders       map[string]ClashRuleProvider `yaml:"rule-providers"`
+	Port               int                          `yaml:"port"`
+	SocksPort          int                          `yaml:"socks-port"`
+	AllowLan           bool                         `yaml:"allow-lan"`
+	Mode               string                       `yaml:"mode"`
+	LogLevel           string                       `yaml:"log-level"`
+	ExternalController string                       `yaml:"external-controller"`
+	DNS                ClashDNS                     `yaml:"dns"`
+	Proxies            []map[string]any             `yaml:"proxies"`
+	ProxyGroups        []ClashProxyGroup            `yaml:"proxy-groups"`
+	Rules              []string                     `yaml:"rules"`
+	RuleProviders      map[string]ClashRuleProvider `yaml:"rule-providers"`
 }
 
 // ClashDNS represents Clash DNS configuration
 type ClashDNS struct {
-	Enable                 bool                       `yaml:"enable"`
-	IPv6                   bool                       `yaml:"ipv6"`
-	EnhancedMode           string                     `yaml:"enhanced-mode"`
-	FakeIPRange            string                     `yaml:"fake-ip-range"`
-	FakeIPFilter           []string                   `yaml:"fake-ip-filter"`
-	DefaultNameserver      []string                   `yaml:"default-nameserver"`
-	Nameserver             []string                   `yaml:"nameserver"`
-	NameserverPolicy       map[string]any             `yaml:"nameserver-policy"`
-	ProxyServerNameserver  []string                   `yaml:"proxy-server-nameserver"`
-	RespectRules           bool                       `yaml:"respect-rules"`
+	Enable                bool           `yaml:"enable"`
+	IPv6                  bool           `yaml:"ipv6"`
+	EnhancedMode          string         `yaml:"enhanced-mode"`
+	FakeIPRange           string         `yaml:"fake-ip-range"`
+	FakeIPFilter          []string       `yaml:"fake-ip-filter"`
+	DefaultNameserver     []string       `yaml:"default-nameserver"`
+	Nameserver            []string       `yaml:"nameserver"`
+	NameserverPolicy      map[string]any `yaml:"nameserver-policy"`
+	ProxyServerNameserver []string       `yaml:"proxy-server-nameserver"`
+	RespectRules          bool           `yaml:"respect-rules"`
 }
 
 // ClashProxyGroup represents a Clash proxy group
@@ -59,16 +59,16 @@ type ClashRuleProvider struct {
 // SurgeTemplateConfig represents configuration for Surge template conversion
 type SurgeTemplateConfig struct {
 	// General settings
-	LogLevel              string
-	BypassSystem          bool
-	SkipProxy             string
-	BypassTun             string
-	DNSServer             []string
-	ExternalController    string
-	HTTPAPIPort           string
-	TestTimeout           int
-	HTTPListenPort        int
-	Socks5ListenPort      int
+	LogLevel           string
+	BypassSystem       bool
+	SkipProxy          string
+	BypassTun          string
+	DNSServer          []string
+	ExternalController string
+	HTTPAPIPort        string
+	TestTimeout        int
+	HTTPListenPort     int
+	Socks5ListenPort   int
 
 	// Advanced settings
 	ExcludeSimpleHostnames bool
@@ -232,7 +232,7 @@ func convertDNSServer(server string) string {
 	// Surge supports DoH/DoT in encrypted-dns-server, but for simplicity, extract IP
 	if after, found := strings.CutPrefix(server, "https://"); found {
 		// Extract IP from DoH URL
-		// e.g., "https://223.5.5.5/dns-query" -> "223.5.5.5"
+		// e.g., "https://dns.alidns.com/dns-query" -> "223.5.5.5"
 		server = after
 		if idx := strings.Index(server, "/"); idx > 0 {
 			server = server[:idx]

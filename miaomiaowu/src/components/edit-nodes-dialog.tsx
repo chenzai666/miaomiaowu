@@ -919,6 +919,20 @@ export function EditNodesDialog({
     return [...PROXY_SERVICE_EMOJIS, ...dynamicEmojis]
   }, [proxyGroupCategories])
 
+  // 代理组列数（含可用节点列）
+  const [totalColumns, setTotalColumns] = useState<number>(() => {
+    const stored = localStorage.getItem('mmw_proxy_group_columns')
+    return stored ? Number(stored) : 0
+  })
+  const maxColumns = 6
+  const effectiveColumns = totalColumns || Math.max(2, Math.min(maxColumns, Math.floor(window.innerWidth * 0.95 / 260)))
+  const proxyGroupColumns = Math.max(1, effectiveColumns - 1)
+
+  const handleColumnsChange = (cols: number) => {
+    setTotalColumns(cols)
+    localStorage.setItem('mmw_proxy_group_columns', String(cols))
+  }
+
   // 添加代理组对话框状态
   const [addGroupDialogOpen, setAddGroupDialogOpen] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
@@ -1610,14 +1624,31 @@ export function EditNodesDialog({
               </div>
             </DialogHeader>
 
-            <div className='flex-1 flex gap-4 py-4 min-h-0'>
+            <div className='flex-1 flex flex-col py-4 min-h-0'>
+              {/* 列数选择 */}
+              <div className='flex items-center justify-end gap-1 mb-2 flex-shrink-0'>
+                <span className='text-xs text-muted-foreground mr-1'>列数</span>
+                {Array.from({ length: maxColumns - 1 }, (_, i) => i + 2).map(n => (
+                  <Button
+                    key={n}
+                    variant={effectiveColumns === n ? 'default' : 'ghost'}
+                    size='icon'
+                    className='h-6 w-6 text-xs'
+                    onClick={() => handleColumnsChange(n)}
+                  >
+                    {n}
+                  </Button>
+                ))}
+              </div>
+
+              <div className='flex-1 flex gap-4 min-h-0'>
               {/* 左侧：代理组 */}
               <div ref={scrollContainerRef} className='flex-1 overflow-y-auto pr-2'>
                 <SortableContext
                   items={proxyGroups.map(g => g.name)}
                   strategy={rectSortingStrategy}
                 >
-                  <div className='grid gap-4 pt-1' style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
+                  <div className='grid gap-4' style={{ gridTemplateColumns: `repeat(${proxyGroupColumns}, 1fr)` }}>
                     {proxyGroups.map((group) => (
                       <SortableCard
                         key={group.name}
@@ -1640,11 +1671,8 @@ export function EditNodesDialog({
                 </SortableContext>
               </div>
 
-              {/* 分割线 */}
-              <div className='w-1 bg-border flex-shrink-0'></div>
-
               {/* 右侧：可用节点 */}
-              <div className='w-64 flex-shrink-0 flex flex-col'>
+              <div className='border-l pl-4 flex flex-col overflow-hidden' style={{ flex: `0 0 ${100 / effectiveColumns}%` }}>
                 {/* 操作按钮 */}
                 <div className='flex-shrink-0 mb-4'>
                   <div className='flex gap-2'>
@@ -1786,6 +1814,7 @@ export function EditNodesDialog({
                   </CardContent>
                 </DroppableAvailableZone>
               </div>
+            </div>
             </div>
 
             {/* DragOverlay */}

@@ -266,20 +266,35 @@ func (h *TrafficSummaryHandler) syncAndFetchExternalSubscriptionTraffic(ctx cont
 			continue
 		}
 
-		// Add traffic from this subscription
+		// Skip subscriptions with traffic mode "none"
+		if strings.ToLower(strings.TrimSpace(updatedSub.TrafficMode)) == "none" {
+			logger.Info("[流量记录] 跳过不统计订阅", "name", updatedSub.Name)
+			continue
+		}
+
+		// Add traffic from this subscription based on TrafficMode
+		var used int64
+		switch strings.ToLower(strings.TrimSpace(updatedSub.TrafficMode)) {
+		case "download":
+			used = updatedSub.Download
+		case "upload":
+			used = updatedSub.Upload
+		default: // "both" or empty
+			used = updatedSub.Upload + updatedSub.Download
+		}
 		totalLimit += updatedSub.Total
-		totalUsed += updatedSub.Upload + updatedSub.Download
+		totalUsed += used
 
 		if updatedSub.Expire == nil {
 			logger.Info("[流量记录] 添加长期订阅流量",
 				"name", updatedSub.Name,
 				"limit_gb", bytesToGigabytes(updatedSub.Total),
-				"used_gb", bytesToGigabytes(updatedSub.Upload+updatedSub.Download))
+				"used_gb", bytesToGigabytes(used))
 		} else {
 			logger.Info("[流量记录] 添加订阅流量",
 				"name", updatedSub.Name,
 				"limit_gb", bytesToGigabytes(updatedSub.Total),
-				"used_gb", bytesToGigabytes(updatedSub.Upload+updatedSub.Download),
+				"used_gb", bytesToGigabytes(used),
 				"expires", updatedSub.Expire.Format("2006-01-02 15:04:05"))
 		}
 	}
@@ -435,6 +450,64 @@ func (h *TrafficSummaryHandler) fetchTotals(ctx context.Context, username string
 		"address", cfg.Address,
 		"server_count", len(cfg.Servers),
 		"server_ids", serverIDs)
+
+	switch cfg.ProbeType {
+	case storage.ProbeTypeNezha:
+		return h.fetchNezhaTotals(ctx, cfg)
+	case storage.ProbeTypeNezhaV0:
+		return h.fetchNezhaV0Totals(ctx, cfg)
+	case storage.ProbeTypeDstatus:
+		return h.fetchBatchSummary(ctx, cfg.Address, serverIDs)
+	case storage.ProbeTypeKomari:
+		return h.fetchKomariTotals(ctx, cfg)
+	default:
+		return 0, 0, 0, fmt.Errorf("unsupported probe type: %s", cfg.ProbeType)
+	}
+}
+
+// fetchTotalsByServerIDs fetches traffic totals filtered by probe server IDs directly.
+// Unlike fetchTotals which filters by server name, this filters by server_id field.
+func (h *TrafficSummaryHandler) fetchTotalsByServerIDs(ctx context.Context, serverIDList []string) (int64, int64, int64, error) {
+	if h.repo == nil {
+		return 0, 0, 0, errors.New("traffic repository not configured")
+	}
+	if len(serverIDList) == 0 {
+		return 0, 0, 0, nil
+	}
+
+	cfg, err := h.repo.GetProbeConfig(ctx)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	allowedIDs := make(map[string]struct{}, len(serverIDList))
+	for _, id := range serverIDList {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			allowedIDs[id] = struct{}{}
+		}
+	}
+
+	filteredServers := make([]storage.ProbeServer, 0, len(cfg.Servers))
+	for _, srv := range cfg.Servers {
+		if _, ok := allowedIDs[strings.TrimSpace(srv.ServerID)]; ok {
+			filteredServers = append(filteredServers, srv)
+		}
+	}
+
+	if len(filteredServers) == 0 {
+		return 0, 0, 0, nil
+	}
+
+	cfg.Servers = filteredServers
+
+	serverIDs := make([]string, 0, len(cfg.Servers))
+	for _, srv := range cfg.Servers {
+		id := strings.TrimSpace(srv.ServerID)
+		if id != "" {
+			serverIDs = append(serverIDs, id)
+		}
+	}
 
 	switch cfg.ProbeType {
 	case storage.ProbeTypeNezha:
@@ -1171,17 +1244,32 @@ func (h *TrafficSummaryHandler) fetchExternalSubscriptionTraffic(ctx context.Con
 			continue
 		}
 
-		// Add traffic from this subscription
+		// Skip subscriptions with traffic mode "none"
+		if strings.ToLower(strings.TrimSpace(sub.TrafficMode)) == "none" {
+			logger.Info("[流量] 跳过不统计订阅", "name", sub.Name)
+			continue
+		}
+
+		// Add traffic from this subscription based on TrafficMode
+		var used int64
+		switch strings.ToLower(strings.TrimSpace(sub.TrafficMode)) {
+		case "download":
+			used = sub.Download
+		case "upload":
+			used = sub.Upload
+		default: // "both" or empty
+			used = sub.Upload + sub.Download
+		}
 		totalLimit += sub.Total
-		totalUsed += sub.Upload + sub.Download
+		totalUsed += used
 
 		if sub.Expire == nil {
-			logger.Info("[流量] 添加长期订阅流量", "name", sub.Name, "limit", sub.Total, "used", sub.Upload+sub.Download)
+			logger.Info("[流量] 添加长期订阅流量", "name", sub.Name, "limit", sub.Total, "used", used)
 		} else {
 			logger.Info("[流量] 添加订阅流量",
 				"name", sub.Name,
 				"limit", sub.Total,
-				"used", sub.Upload+sub.Download,
+				"used", used,
 				"expires", sub.Expire.Format("2006-01-02 15:04:05"))
 		}
 	}
@@ -1320,4 +1408,84 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"error": err.Error(),
 	})
+}
+
+// HandleSubscribeTraffic returns traffic data for subscribe files that have
+// traffic_limit or stats_server_ids configured, plus the overall probe totals.
+func (h *TrafficSummaryHandler) HandleSubscribeTraffic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, errors.New("only GET is supported"))
+		return
+	}
+
+	ctx := r.Context()
+	files, err := h.repo.ListSubscribeFiles(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	type subTraffic struct {
+		ID      int64   `json:"id"`
+		LimitGB float64 `json:"limit_gb"`
+		UsedGB  float64 `json:"used_gb"`
+	}
+
+	type probeTotal struct {
+		LimitGB float64 `json:"limit_gb"`
+		UsedGB  float64 `json:"used_gb"`
+	}
+
+	type response struct {
+		Items      []subTraffic `json:"items"`
+		ProbeTotal *probeTotal  `json:"probe_total,omitempty"`
+	}
+
+	var items []subTraffic
+
+	for _, f := range files {
+		if f.TrafficLimit == nil && f.StatsServerIDs == "" {
+			continue
+		}
+
+		var limitBytes, usedBytes int64
+
+		if f.StatsServerIDs != "" {
+			idList := strings.Split(f.StatsServerIDs, ",")
+			statsLimit, _, statsUsed, statsErr := h.fetchTotalsByServerIDs(ctx, idList)
+			if statsErr == nil {
+				if f.TrafficLimit != nil {
+					limitBytes = int64(*f.TrafficLimit * bytesPerGigabyte)
+				} else {
+					limitBytes = statsLimit
+				}
+				usedBytes = statsUsed
+			}
+		} else if f.TrafficLimit != nil {
+			limitBytes = int64(*f.TrafficLimit * bytesPerGigabyte)
+			_, _, totalUsed, probeErr := h.fetchTotals(ctx, "", nil)
+			if probeErr == nil {
+				usedBytes = totalUsed
+			}
+		}
+
+		items = append(items, subTraffic{
+			ID:      f.ID,
+			LimitGB: roundUpTwoDecimals(bytesToGigabytes(limitBytes)),
+			UsedGB:  roundUpTwoDecimals(bytesToGigabytes(usedBytes)),
+		})
+	}
+
+	resp := response{Items: items}
+
+	// Fetch probe total traffic as default
+	probeLimit, _, probeUsed, probeErr := h.fetchTotals(ctx, "", nil)
+	if probeErr == nil {
+		resp.ProbeTotal = &probeTotal{
+			LimitGB: roundUpTwoDecimals(bytesToGigabytes(probeLimit)),
+			UsedGB:  roundUpTwoDecimals(bytesToGigabytes(probeUsed)),
+		}
+	}
+
+	respondJSON(w, http.StatusOK, resp)
 }

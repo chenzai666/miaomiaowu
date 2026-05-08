@@ -179,6 +179,13 @@ func (h *probeConfigHandler) handleUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// 清理订阅表中已不存在的统计服务器 ID
+	validIDs := make([]string, 0, len(servers))
+	for _, srv := range servers {
+		validIDs = append(validIDs, srv.ServerID)
+	}
+	_ = h.repo.CleanupStatsServerIDs(r.Context(), validIDs)
+
 	respondJSON(w, http.StatusOK, map[string]any{
 		"config": convertProbeConfigResponse(updated),
 	})
@@ -189,6 +196,9 @@ func (h *probeConfigHandler) handleDelete(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	// 探针配置已删除，清空所有订阅的统计服务器配置
+	_ = h.repo.ClearAllStatsServerIDs(r.Context())
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"message": "探针配置已删除",

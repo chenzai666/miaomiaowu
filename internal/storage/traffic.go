@@ -236,6 +236,8 @@ type SubscribeFile struct {
 	SelectedTags        []string   // 选中的节点标签，为空表示使用所有节点
 	RawOutput           bool       // 非Clash配置，直接输出原始内容
 	SortOrder           int        // 排序权重，值越小越靠前
+	TrafficLimit        *float64   // 手动设置的总流量上限(GB)，nil表示跟随探针
+	StatsServerIDs      string     // 统计服务器的探针服务器ID列表(逗号分隔)
 	ExpireAt            *time.Time // Optional expiration timestamp
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -273,6 +275,7 @@ type SystemConfig struct {
 	SubInfoExpirePrefix     string // Prefix for expire time node, default "📅过期时间"
 	SubInfoTrafficPrefix    string // Prefix for remaining traffic node, default "⌛剩余流量"
 	EnableShortLink         bool   // 启用短链接（全局设置）
+	EnableSubTrafficHeader  bool   // 启用订阅响应头流量信息
 }
 
 // ExternalSubscription represents an external subscription URL imported by user.
@@ -288,7 +291,7 @@ type ExternalSubscription struct {
 	Download    int64      // 已下载流量（字节）
 	Total       int64      // 总流量（字节）
 	Expire      *time.Time // 过期时间
-	TrafficMode string     // 流量统计方式: "download", "upload", "both"
+	TrafficMode string     // 流量统计方式: "download", "upload", "both", "none"
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -862,6 +865,16 @@ CREATE INDEX IF NOT EXISTS idx_external_subscriptions_url ON external_subscripti
 		return err
 	}
 
+	// Add traffic_limit column to subscribe_files table
+	if err := r.ensureSubscribeFileColumn("traffic_limit", "REAL"); err != nil {
+		return err
+	}
+
+	// Add stats_server_ids column to subscribe_files table
+	if err := r.ensureSubscribeFileColumn("stats_server_ids", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
 	// Create system_config table for global settings
 	const systemConfigSchema = `
 CREATE TABLE IF NOT EXISTS system_config (
@@ -917,6 +930,11 @@ WHERE NOT EXISTS (SELECT 1 FROM system_config WHERE id = 1);
 
 	// Add enable_short_link column to system_config table (default enabled)
 	if err := r.ensureSystemConfigColumn("enable_short_link", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+
+	// Add enable_sub_traffic_header column to system_config table (default enabled)
+	if err := r.ensureSystemConfigColumn("enable_sub_traffic_header", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
 
@@ -4546,25 +4564,26 @@ func (r *TrafficRepository) DeleteProxyProviderConfig(ctx context.Context, id in
 func (r *TrafficRepository) GetSystemConfig(ctx context.Context) (SystemConfig, error) {
 	const query = `
 SELECT proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_mode_timeout,
-       enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix, COALESCE(enable_short_link, 1)
+       enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix, COALESCE(enable_short_link, 1), COALESCE(enable_sub_traffic_header, 1)
 FROM system_config
 WHERE id = 1
 `
 
 	var cfg SystemConfig
-	var compatibilityMode, silentMode, silentModeTimeout, enableSubInfoNodes, enableShortLinkInt int
+	var compatibilityMode, silentMode, silentModeTimeout, enableSubInfoNodes, enableShortLinkInt, enableSubTrafficHeaderInt int
 	err := r.db.QueryRowContext(ctx, query).Scan(
 		&cfg.ProxyGroupsSourceURL, &compatibilityMode, &silentMode, &silentModeTimeout,
-		&enableSubInfoNodes, &cfg.SubInfoExpirePrefix, &cfg.SubInfoTrafficPrefix, &enableShortLinkInt,
+		&enableSubInfoNodes, &cfg.SubInfoExpirePrefix, &cfg.SubInfoTrafficPrefix, &enableShortLinkInt, &enableSubTrafficHeaderInt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Return empty config if row doesn't exist (defensive)
 			return SystemConfig{
-				SilentModeTimeout:    15,
-				SubInfoExpirePrefix:  "📅过期时间",
-				SubInfoTrafficPrefix: "⌛剩余流量",
-				EnableShortLink:      true,
+				SilentModeTimeout:      15,
+				SubInfoExpirePrefix:    "📅过期时间",
+				SubInfoTrafficPrefix:   "⌛剩余流量",
+				EnableShortLink:        true,
+				EnableSubTrafficHeader: true,
 			}, nil
 		}
 		return SystemConfig{}, fmt.Errorf("query system config: %w", err)
@@ -4578,6 +4597,7 @@ WHERE id = 1
 	}
 	cfg.EnableSubInfoNodes = enableSubInfoNodes != 0
 	cfg.EnableShortLink = enableShortLinkInt != 0
+	cfg.EnableSubTrafficHeader = enableSubTrafficHeaderInt != 0
 	if cfg.SubInfoExpirePrefix == "" {
 		cfg.SubInfoExpirePrefix = "📅过期时间"
 	}
@@ -4600,6 +4620,7 @@ SET proxy_groups_source_url = ?,
     sub_info_expire_prefix = ?,
     sub_info_traffic_prefix = ?,
     enable_short_link = ?,
+    enable_sub_traffic_header = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 1
 `
@@ -4624,6 +4645,10 @@ WHERE id = 1
 	if cfg.EnableShortLink {
 		enableShortLink = 1
 	}
+	enableSubTrafficHeader := 0
+	if cfg.EnableSubTrafficHeader {
+		enableSubTrafficHeader = 1
+	}
 	subInfoExpirePrefix := cfg.SubInfoExpirePrefix
 	if subInfoExpirePrefix == "" {
 		subInfoExpirePrefix = "📅过期时间"
@@ -4635,7 +4660,7 @@ WHERE id = 1
 
 	result, err := r.db.ExecContext(ctx, updateStmt,
 		cfg.ProxyGroupsSourceURL, compatibilityMode, silentMode, silentModeTimeout,
-		enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix, enableShortLink,
+		enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix, enableShortLink, enableSubTrafficHeader,
 	)
 	if err != nil {
 		return fmt.Errorf("update system config: %w", err)
@@ -4650,12 +4675,12 @@ WHERE id = 1
 	if rowsAffected == 0 {
 		const insertStmt = `
 INSERT INTO system_config (id, proxy_groups_source_url, client_compatibility_mode, silent_mode, silent_mode_timeout,
-                           enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix, enable_short_link)
-VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                           enable_sub_info_nodes, sub_info_expire_prefix, sub_info_traffic_prefix, enable_short_link, enable_sub_traffic_header)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 		if _, err := r.db.ExecContext(ctx, insertStmt,
 			cfg.ProxyGroupsSourceURL, compatibilityMode, silentMode, silentModeTimeout,
-			enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix, enableShortLink,
+			enableSubInfoNodes, subInfoExpirePrefix, subInfoTrafficPrefix, enableShortLink, enableSubTrafficHeader,
 		); err != nil {
 			return fmt.Errorf("insert system config: %w", err)
 		}

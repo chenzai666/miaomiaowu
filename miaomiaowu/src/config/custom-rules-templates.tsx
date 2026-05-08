@@ -127,92 +127,92 @@ export const RULE_TEMPLATES = {
 			name: '使用♻️ 自动选择解析DNS',
 			content: `enable: true
 nameserver:
-  - https://8.8.8.8/dns-query#♻️ 自动选择
+  - https://dns.google/dns-query/dns-query#♻️ 自动选择
 direct-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 nameserver-policy:
   geosite:gfw,greatfire:
-    - https://8.8.8.8/dns-query#♻️ 自动选择
+    - https://dns.google/dns-query/dns-query#♻️ 自动选择
   geosite:cn,apple,private,steam,onedrive:
-    - https://1.12.12.12/dns-query
+    - https://doh.pub/dns-query
   geosite:category-games@cn:
-    - https://1.12.12.12/dns-query
+    - https://doh.pub/dns-query
   geosite:google:
-    - https://1.0.0.1/dns-query#♻️ 自动选择
+    - https://cloudflare-dns.com/dns-query/dns-query#♻️ 自动选择
   geosite:geolocation-!cn:
-    - https://1.0.0.1/dns-query#♻️ 自动选择
+    - https://cloudflare-dns.com/dns-query/dns-query#♻️ 自动选择
 proxy-server-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 ipv6: false
 listen: 0.0.0.0:7874
 default-nameserver:
-  - https://1.1.1.1/dns-query#♻️ 自动选择
+  - https://cloudflare-dns.com/dns-query/dns-query#♻️ 自动选择
 fallback:
-  - https://1.1.1.1/dns-query#♻️ 自动选择
-  - https://120.53.53.53/dns-query
-  - https://223.5.5.5/dns-query
+  - https://cloudflare-dns.com/dns-query/dns-query#♻️ 自动选择
+  - https://doh.pub/dns-query
+  - https://dns.alidns.com/dns-query
 use-hosts: true`
 		},
     node_select_proxy: {
 			name: '使用🚀 节点选择解析DNS',
 			content: `enable: true
 nameserver:
-  - https://8.8.8.8/dns-query#🚀 节点选择
+  - https://dns.google/dns-query/dns-query#🚀 节点选择
 direct-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 nameserver-policy:
   geosite:gfw,greatfire:
-    - https://8.8.8.8/dns-query#🚀 节点选择
+    - https://dns.google/dns-query/dns-query#🚀 节点选择
   geosite:cn,apple,private,steam,onedrive:
-    - https://1.12.12.12/dns-query
+    - https://doh.pub/dns-query
   geosite:category-games@cn:
-    - https://1.12.12.12/dns-query
+    - https://doh.pub/dns-query
   geosite:google:
-    - https://1.0.0.1/dns-query#🚀 节点选择
+    - https://cloudflare-dns.com/dns-query/dns-query#🚀 节点选择
   geosite:geolocation-!cn:
-    - https://1.0.0.1/dns-query#🚀 节点选择
+    - https://cloudflare-dns.com/dns-query/dns-query#🚀 节点选择
 proxy-server-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 ipv6: false
 listen: 0.0.0.0:7874
 default-nameserver:
-  - https://1.1.1.1/dns-query#🚀 节点选择
+  - https://cloudflare-dns.com/dns-query/dns-query#🚀 节点选择
 fallback:
-  - https://1.1.1.1/dns-query#🚀 节点选择
-  - https://120.53.53.53/dns-query
-  - https://223.5.5.5/dns-query
+  - https://cloudflare-dns.com/dns-query/dns-query#🚀 节点选择
+  - https://doh.pub/dns-query
+  - https://dns.alidns.com/dns-query
 use-hosts: true`
 		},
 		local: {
 			name: '本地解析DNS',
 			content: `enable: true
 nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 direct-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 nameserver-policy:
   'geosite:gfw,greatfire':
-    - 'https://8.8.8.8/dns-query'
+    - 'https://dns.google/dns-query/dns-query'
   "geosite:cn, private":
-    - https://1.12.12.12/dns-query
+    - https://doh.pub/dns-query
   "geosite:category-games@cn":
-    - https://1.12.12.12/dns-query
+    - https://doh.pub/dns-query
   "geosite:google":
-    - https://1.0.0.1/dns-query
+    - https://cloudflare-dns.com/dns-query/dns-query
   "geosite:apple":
-    - https://1.0.0.1/dns-query
+    - https://cloudflare-dns.com/dns-query/dns-query
   "geosite:geolocation-!cn":
-    - https://1.0.0.1/dns-query
+    - https://cloudflare-dns.com/dns-query/dns-query
 proxy-server-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 ipv6: false
 listen: 0.0.0.0:7874
 default-nameserver:
-  - https://1.1.1.1/dns-query
+  - https://cloudflare-dns.com/dns-query/dns-query
 fallback:
-  - https://120.53.53.53/dns-query
-  - https://223.5.5.5/dns-query
-  - https://1.1.1.1/dns-query
+  - https://doh.pub/dns-query
+  - https://dns.alidns.com/dns-query
+  - https://cloudflare-dns.com/dns-query/dns-query
 use-hosts: true`
 		},
     redir_host_no_dnsleak: {
@@ -220,18 +220,18 @@ use-hosts: true`
 			content: `enable: true
 enhanced-mode: redir-host
 nameserver:
-  - https://8.8.8.8/dns-query#🚀 节点选择
+  - https://dns.google/dns-query/dns-query#🚀 节点选择
 direct-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 nameserver-policy:
   geosite:cn,apple,private,steam,onedrive,category-games@cn:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 proxy-server-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 ipv6: false
 listen: 0.0.0.0:7874
 default-nameserver:
-  - https://1.1.1.1/dns-query#🚀 节点选择`
+  - https://cloudflare-dns.com/dns-query/dns-query#🚀 节点选择`
 		},
     fake_ip_no_dnsleak: {
 			name: 'fake-ip 模式(防DNS泄漏)',
@@ -242,13 +242,13 @@ nameserver:
   - tls://8.8.8.8
   - tls://1.1.1.1
 direct-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 nameserver-policy:
   geosite:cn:
     - 223.5.5.5
     - 119.29.29.29
 proxy-server-nameserver:
-  - https://1.12.12.12/dns-query
+  - https://doh.pub/dns-query
 ipv6: false
 listen: 0.0.0.0:7874
 default-nameserver:

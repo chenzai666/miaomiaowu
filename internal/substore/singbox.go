@@ -128,6 +128,8 @@ func (p *SingboxProducer) Produce(proxies []Proxy, outputType string, opts *Prod
 			parsed, err = p.wireguardParser(proxy)
 		case "anytls":
 			parsed, err = p.anytlsParser(proxy)
+		case "naive":
+			parsed, err = p.naiveParser(proxy)
 		default:
 			err = fmt.Errorf("platform sing-box does not support proxy type: %s", proxyType)
 		}
@@ -1467,6 +1469,41 @@ func (p *SingboxProducer) anytlsParser(proxy Proxy) (map[string]interface{}, err
 	p.detourParser(proxy, parsed)
 	p.tlsParser(proxy, parsed)
 	p.ipVersionParser(proxy, parsed)
+
+	return parsed, nil
+}
+
+func (p *SingboxProducer) naiveParser(proxy Proxy) (map[string]interface{}, error) {
+	port := GetInt(proxy, "port")
+	if port < 0 || port > 65535 {
+		return nil, fmt.Errorf("invalid port")
+	}
+
+	sni := GetString(proxy, "sni")
+	if sni == "" {
+		sni = GetString(proxy, "server")
+	}
+
+	parsed := map[string]interface{}{
+		"tag":         GetString(proxy, "name"),
+		"type":        "naive",
+		"server":      GetString(proxy, "server"),
+		"server_port": port,
+		"username":    GetString(proxy, "username"),
+		"password":    GetString(proxy, "password"),
+		"tls": map[string]interface{}{
+			"enabled":     true,
+			"server_name": sni,
+		},
+	}
+
+	if GetBool(proxy, "udp-over-tcp") {
+		parsed["udp_over_tcp"] = true
+	}
+
+	if extraHeaders := GetMap(proxy, "extra-headers"); extraHeaders != nil {
+		parsed["extra_headers"] = extraHeaders
+	}
 
 	return parsed, nil
 }

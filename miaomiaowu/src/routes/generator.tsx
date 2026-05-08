@@ -292,6 +292,10 @@ function SubscriptionGeneratorPage() {
   const [subscribeFilename, setSubscribeFilename] = useState('')
   const [subscribeDescription, setSubscribeDescription] = useState('')
 
+  // 流量配置状态
+  const [trafficLimit, setTrafficLimit] = useState('')
+  const [statsServerIds, setStatsServerIds] = useState<string[]>([])
+
   // 手动分组对话框状态
   const [groupDialogOpen, setGroupDialogOpen] = useState(false)
   const [proxyGroups, setProxyGroups] = useState<ProxyGroup[]>([])
@@ -382,6 +386,17 @@ function SubscriptionGeneratorPage() {
     enabled: Boolean(auth.accessToken) && enableProxyProvider,
   })
   const proxyProviderConfigs = proxyProviderConfigsData ?? []
+
+  // 获取探针服务器配置（用于流量统计服务器选择）
+  const { data: probeConfigData } = useQuery({
+    queryKey: ['probe-config'],
+    queryFn: async () => {
+      const response = await api.get('/api/admin/probe-config')
+      return response.data as { config: { servers: Array<{ id: number; name: string; server_id: string }> } }
+    },
+    enabled: Boolean(auth.accessToken),
+  })
+  const probeServers = probeConfigData?.config?.servers ?? []
 
   // 获取用户订阅 token（用于代理集合 URL）
   const { data: userTokenData } = useQuery({
@@ -1168,6 +1183,8 @@ function SubscriptionGeneratorPage() {
       content: string
       template_filename?: string
       selected_tags?: string[]
+      traffic_limit?: number | null
+      stats_server_ids?: string
     }) => {
       const response = await api.post('/api/admin/subscribe-files/create-from-config', data)
       return response.data
@@ -1214,6 +1231,8 @@ function SubscriptionGeneratorPage() {
       content: string
       template_filename?: string
       selected_tags?: string[]
+      traffic_limit?: number | null
+      stats_server_ids?: string
     } = {
       name: subscribeName.trim(),
       filename: subscribeFilename.trim(),
@@ -1225,6 +1244,14 @@ function SubscriptionGeneratorPage() {
     if (isV3Mode && selectedV3Template) {
       data.template_filename = selectedV3Template
       data.selected_tags = selectedV3Tags.length > 0 ? selectedV3Tags : undefined
+    }
+
+    // 流量配置
+    if (trafficLimit) {
+      data.traffic_limit = parseFloat(trafficLimit)
+    }
+    if (statsServerIds.length > 0) {
+      data.stats_server_ids = statsServerIds.join(',')
     }
 
     saveSubscribeMutation.mutate(data)
@@ -2688,6 +2715,68 @@ function SubscriptionGeneratorPage() {
           </Card>
 
           <CustomRulesEditor rules={customRules} onChange={setCustomRules} />
+
+          {clashConfig && (
+            <Card>
+              <CardHeader>
+                <CardTitle className='flex items-center gap-2'>
+                  <Activity className='h-5 w-5' />
+                  流量配置
+                </CardTitle>
+                <CardDescription>
+                  设置订阅的总流量上限和统计服务器（可选，保存订阅时生效）
+                </CardDescription>
+              </CardHeader>
+              <CardContent className='space-y-4'>
+                <p className='text-xs text-destructive'>
+                  请注意，妙妙屋不能管理节点的已用流量，已用流量来自探针的已用流量
+                </p>
+                <div className='space-y-2'>
+                  <Label>总流量上限 (GB)</Label>
+                  <Input
+                    type='number'
+                    min='0'
+                    step='0.01'
+                    placeholder='留空则跟随探针总流量'
+                    value={trafficLimit}
+                    onChange={(e) => setTrafficLimit(e.target.value)}
+                  />
+                  <p className='text-xs text-muted-foreground'>
+                    手动指定总流量上限，留空表示使用探针返回的总流量
+                  </p>
+                </div>
+                {probeServers.length > 0 && (
+                  <div className='space-y-2'>
+                    <Label>统计服务器</Label>
+                    <div className='flex flex-wrap gap-2'>
+                      {probeServers.map((server) => {
+                        const isSelected = statsServerIds.includes(server.server_id)
+                        return (
+                          <Button
+                            key={server.server_id}
+                            variant={isSelected ? 'default' : 'outline'}
+                            size='sm'
+                            onClick={() => {
+                              setStatsServerIds(prev =>
+                                isSelected
+                                  ? prev.filter(id => id !== server.server_id)
+                                  : [...prev, server.server_id]
+                              )
+                            }}
+                          >
+                            {server.name}
+                          </Button>
+                        )
+                      })}
+                    </div>
+                    <p className='text-xs text-muted-foreground'>
+                      选择用于统计已用流量的探针服务器，不选则使用所有服务器
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {clashConfig && (
             <Card>

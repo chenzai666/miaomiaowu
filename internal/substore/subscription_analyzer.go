@@ -387,7 +387,7 @@ func GenerateV3TemplateFromAnalysis(analysis *SubscriptionAnalysisResult) string
 	lines = append(lines, "  enhanced-mode: fake-ip")
 	lines = append(lines, "  fake-ip-range: 198.18.0.1/16")
 	lines = append(lines, "  nameserver:")
-	lines = append(lines, "    - https://1.12.12.12/dns-query")
+	lines = append(lines, "    - https://doh.pub/dns-query")
 	lines = append(lines, "  ipv6: false")
 	lines = append(lines, "")
 

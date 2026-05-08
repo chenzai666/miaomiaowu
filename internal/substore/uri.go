@@ -115,10 +115,16 @@ func (p *URIProducer) Produce(proxies []Proxy, outputType string, opts *ProduceO
 			uri, err = p.encodeTUIC(proxy)
 		case "socks5":
 			uri, err = p.encodeSOCKS5(proxy)
+		case "http":
+			uri, err = p.encodeHTTP(proxy)
 		case "wireguard":
 			uri, err = p.encodeWireGuard(proxy)
 		case "anytls":
 			uri, err = p.encodeAnyTLS(proxy)
+		case "naive":
+			uri, err = p.encodeNaive(proxy)
+		case "mieru":
+			uri, err = p.encodeMieru(proxy)
 		default:
 			// Skip unsupported proxy types instead of returning error
 			continue
@@ -951,6 +957,29 @@ func (p *URIProducer) encodeSOCKS5(proxy Proxy) (string, error) {
 	return uri, nil
 }
 
+func (p *URIProducer) encodeHTTP(proxy Proxy) (string, error) {
+	server := GetString(proxy, "server")
+	port := GetInt(proxy, "port")
+	username := GetString(proxy, "username")
+	password := GetString(proxy, "password")
+	name := GetString(proxy, "name")
+	tls := GetBool(proxy, "tls")
+
+	scheme := "http"
+	if tls {
+		scheme = "https"
+	}
+
+	var authPart string
+	if username != "" {
+		authPart = url.PathEscape(username) + ":" + url.PathEscape(password) + "@"
+	}
+
+	uri := fmt.Sprintf("%s://%s%s:%d#%s",
+		scheme, authPart, server, port, url.PathEscape(name))
+	return uri, nil
+}
+
 // encodeWireGuard encodes WireGuard proxy to wireguard:// URI (matches frontend)
 func (p *URIProducer) encodeWireGuard(proxy Proxy) (string, error) {
 	server := GetString(proxy, "server")
@@ -1063,6 +1092,80 @@ func (p *URIProducer) encodeAnyTLS(proxy Proxy) (string, error) {
 	if len(params) > 0 {
 		uri += "/?" + params.Encode()
 	}
+	uri += "#" + url.PathEscape(name)
+	return uri, nil
+}
+
+func (p *URIProducer) encodeNaive(proxy Proxy) (string, error) {
+	name := GetString(proxy, "name")
+	server := GetString(proxy, "server")
+	port := GetInt(proxy, "port")
+	username := GetString(proxy, "username")
+	password := GetString(proxy, "password")
+
+	if server == "" || port == 0 {
+		return "", fmt.Errorf("missing server or port")
+	}
+
+	auth := url.PathEscape(username) + ":" + url.PathEscape(password)
+
+	params := url.Values{}
+	params.Set("security", "tls")
+	if sni := GetString(proxy, "sni"); sni != "" {
+		params.Set("sni", sni)
+	}
+	if GetBool(proxy, "udp-over-tcp") {
+		params.Set("uot", "1")
+	}
+	if extraHeaders := GetMap(proxy, "extra-headers"); extraHeaders != nil {
+		for k, v := range extraHeaders {
+			params.Set("header", fmt.Sprintf("%s:%v", k, v))
+		}
+	}
+
+	uri := fmt.Sprintf("naive://%s@%s:%d/?%s", auth, server, port, params.Encode())
+	uri += "#" + url.PathEscape(name)
+	return uri, nil
+}
+
+func (p *URIProducer) encodeMieru(proxy Proxy) (string, error) {
+	name := GetString(proxy, "name")
+	server := GetString(proxy, "server")
+	port := GetInt(proxy, "port")
+	username := GetString(proxy, "username")
+	password := GetString(proxy, "password")
+
+	if server == "" {
+		return "", fmt.Errorf("missing server")
+	}
+
+	auth := url.PathEscape(username) + ":" + url.PathEscape(password)
+
+	params := url.Values{}
+	if transport := GetString(proxy, "transport"); transport != "" {
+		params.Set("transport", transport)
+	}
+	if multiplexing := GetString(proxy, "multiplexing"); multiplexing != "" {
+		params.Set("multiplexing", multiplexing)
+	}
+	if mtu := GetInt(proxy, "mtu"); mtu > 0 {
+		params.Set("mtu", fmt.Sprintf("%d", mtu))
+	}
+	if portRange := GetString(proxy, "port-range"); portRange != "" {
+		params.Set("port-range", portRange)
+	}
+	if tp := GetString(proxy, "traffic-pattern"); tp != "" {
+		params.Set("traffic-pattern", tp)
+	}
+
+	var serverPart string
+	if port > 0 {
+		serverPart = fmt.Sprintf("%s:%d", server, port)
+	} else {
+		serverPart = server
+	}
+
+	uri := fmt.Sprintf("mieru://%s@%s/?%s", auth, serverPart, params.Encode())
 	uri += "#" + url.PathEscape(name)
 	return uri, nil
 }

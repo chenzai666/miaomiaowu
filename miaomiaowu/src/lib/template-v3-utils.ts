@@ -452,8 +452,8 @@ export function createBlankTemplate(): string {
       ipv6: true,
       'enhanced-mode': 'fake-ip',
       nameserver: [
-        'https://223.5.5.5/dns-query',
-        'https://120.53.53.53/dns-query',
+        'https://dns.alidns.com/dns-query',
+        'https://doh.pub/dns-query',
       ],
     },
     proxies: [],

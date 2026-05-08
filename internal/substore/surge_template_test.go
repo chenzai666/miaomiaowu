@@ -34,7 +34,7 @@ func TestConvertDNSServer(t *testing.T) {
 		expected string
 	}{
 		{"223.5.5.5", "223.5.5.5"},
-		{"https://223.5.5.5/dns-query", "223.5.5.5"},
+		{"https://dns.alidns.com/dns-query", "223.5.5.5"},
 		{"https://dns.google/dns-query", "dns.google"},
 		{"tls://223.5.5.5", "223.5.5.5"},
 		{"quic://223.5.5.5", "223.5.5.5"},
@@ -95,7 +95,7 @@ func TestConvertClashDNSToSurge(t *testing.T) {
 			"tls://223.5.5.5",
 		},
 		Nameserver: []string{
-			"https://223.5.5.5/dns-query",
+			"https://dns.alidns.com/dns-query",
 			"https://119.29.29.29/dns-query",
 		},
 	}
@@ -109,7 +109,7 @@ func TestConvertClashDNSToSurge(t *testing.T) {
 
 	// Should contain extracted IPs
 	expectedServers := map[string]bool{
-		"223.5.5.5":   true,
+		"223.5.5.5":    true,
 		"119.29.29.29": true,
 	}
 
@@ -129,7 +129,7 @@ func TestBuildSurgeGeneral(t *testing.T) {
 		DNS: ClashDNS{
 			Enable: true,
 			Nameserver: []string{
-				"https://223.5.5.5/dns-query",
+				"https://dns.alidns.com/dns-query",
 			},
 		},
 	}
@@ -206,10 +206,10 @@ func TestConvertClashRulesToSurgeFormat(t *testing.T) {
 func TestConvertClashProxyGroupsToSurge(t *testing.T) {
 	groups := []ClashProxyGroup{
 		{
-			Name:    "Auto",
-			Type:    "url-test",
-			Proxies: []string{"Proxy1", "Proxy2"},
-			URL:     "http://www.gstatic.com/generate_204",
+			Name:     "Auto",
+			Type:     "url-test",
+			Proxies:  []string{"Proxy1", "Proxy2"},
+			URL:      "http://www.gstatic.com/generate_204",
 			Interval: 300,
 		},
 		{
@@ -249,7 +249,7 @@ func TestBuildCompleteSurgeConfig(t *testing.T) {
 		DNS: ClashDNS{
 			Enable: true,
 			Nameserver: []string{
-				"https://223.5.5.5/dns-query",
+				"https://dns.alidns.com/dns-query",
 			},
 		},
 		ProxyGroups: []ClashProxyGroup{
@@ -269,11 +269,11 @@ func TestBuildCompleteSurgeConfig(t *testing.T) {
 
 	proxies := []Proxy{
 		{
-			"name":   "TestProxy",
-			"type":   "ss",
-			"server": "1.2.3.4",
-			"port":   8388,
-			"cipher": "aes-256-gcm",
+			"name":     "TestProxy",
+			"type":     "ss",
+			"server":   "1.2.3.4",
+			"port":     8388,
+			"cipher":   "aes-256-gcm",
 			"password": "password",
 		},
 	}

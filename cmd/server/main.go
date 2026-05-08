@@ -189,6 +189,7 @@ func main() {
 	mux.Handle("/api/user/debug/", auth.RequireToken(tokenStore, handler.NewDebugHandler(repo)))
 
 	mux.Handle("/api/traffic/summary", auth.RequireToken(tokenStore, trafficHandler))
+	mux.Handle("/api/traffic/subscribe", auth.RequireToken(tokenStore, http.HandlerFunc(trafficHandler.HandleSubscribeTraffic)))
 	mux.Handle("/api/subscriptions", auth.RequireToken(tokenStore, handler.NewSubscriptionListHandler(repo)))
 	mux.Handle("/api/dns/resolve", auth.RequireToken(tokenStore, handler.NewDNSHandler()))
 	mux.Handle("/api/subscribe-files", auth.RequireToken(tokenStore, handler.NewSubscribeFilesListHandler(repo)))

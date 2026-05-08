@@ -259,7 +259,11 @@ function TemplatesV3Page() {
           if (draftJson) {
             try {
               const draft = JSON.parse(draftJson)
-              if (draft.templateContent !== templateData) {
+              // Normalize templateData the same way draft was saved
+              const vars = extractTemplateVariables(templateData)
+              const groups = extractProxyGroups(templateData, vars)
+              const normalizedData = groups.length > 0 ? updateProxyGroups(templateData, groups) : templateData
+              if (draft.templateContent !== normalizedData) {
                 pendingDraftRef.current = draft
                 setIsDraftRecoveryOpen(true)
               } else {

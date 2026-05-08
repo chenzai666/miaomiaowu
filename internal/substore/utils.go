@@ -49,9 +49,9 @@ func (r *Result) Append(data string) error {
 }
 
 // AppendIfPresent adds data to output if the attribute is present in proxy
+// 改为使用GetValue取值，支持多路径嵌套属性
 func (r *Result) AppendIfPresent(format string, attr string) {
-	if IsPresent(r.Proxy, attr) {
-		val := r.Proxy[attr]
+	if val, ok := GetValue(r.Proxy, attr); ok && val != nil {
 		formatted := fmt.Sprintf(format, val)
 		r.Append(formatted)
 	}

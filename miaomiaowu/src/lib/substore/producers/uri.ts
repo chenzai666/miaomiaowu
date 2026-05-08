@@ -278,7 +278,7 @@ export default function URI_Producer(): Producer {
         if (
             ['trojan', 'tuic', 'hysteria', 'hysteria2', 'juicity'].includes(
                 proxy.type,
-            )
+            ) && proxy.tls === false
         ) {
             delete proxy.tls;
         }
@@ -527,7 +527,7 @@ export default function URI_Producer(): Producer {
                 let trojanSid = '';
                 let trojanPbk = '';
                 let trojanSpx = '';
-                let trojanSecurity = '';
+                let trojanSecurity = '&security=none';
                 let trojanMode = '';
                 let trojanExtra = '';
                 if (trojanIsReality) {
@@ -552,12 +552,15 @@ export default function URI_Producer(): Producer {
                     if (proxy._mode) {
                         trojanMode = `&mode=${encodeURIComponent(proxy._mode)}`;
                     }
+                } else if (proxy.tls) { // TLS = true 
+                    trojanSecurity = `&security=tls`;
                 }
                 // UDP
                 let trojanUdp = '';
                 if (proxy.udp !== undefined) {
                     trojanUdp = `&udp=${proxy.udp ? '1' : '0'}`;
                 }
+                
                 result = `trojan://${proxy.password}@${proxy.server}:${
                     proxy.port
                 }?sni=${encodeURIComponent(proxy.sni || proxy.server)}${

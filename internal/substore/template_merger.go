@@ -146,17 +146,17 @@ dns:
   respect-rules: true
   enhanced-mode: fake-ip
   nameserver:
-    - "https://120.53.53.53/dns-query"
-    - "https://223.5.5.5/dns-query"
+    - "https://doh.pub/dns-query"
+    - "https://dns.alidns.com/dns-query"
   default-nameserver:
     - tls://223.5.5.5
   proxy-server-nameserver:
-    - "https://120.53.53.53/dns-query"
-    - "https://223.5.5.5/dns-query"
+    - "https://doh.pub/dns-query"
+    - "https://dns.alidns.com/dns-query"
   nameserver-policy:
     geosite:cn,private:
-      - "https://120.53.53.53/dns-query"
-      - "https://223.5.5.5/dns-query"
+      - "https://doh.pub/dns-query"
+      - "https://dns.alidns.com/dns-query"
     geosite:geolocation-!cn:
       - "https://dns.cloudflare.com/dns-query"
       - "https://dns.google/dns-query"

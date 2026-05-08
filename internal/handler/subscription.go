@@ -31,18 +31,18 @@ dns:
   enhanced-mode: fake-ip
   ipv6: true
   nameserver:
-    - https://120.53.53.53/dns-query
-    - https://223.5.5.5/dns-query
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
   nameserver-policy:
     geosite:cn,private:
-      - https://120.53.53.53/dns-query
-      - https://223.5.5.5/dns-query
+      - https://doh.pub/dns-query
+      - https://dns.alidns.com/dns-query
     geosite:geolocation-!cn:
       - https://dns.cloudflare.com/dns-query
       - https://dns.google/dns-query
   proxy-server-nameserver:
-    - https://120.53.53.53/dns-query
-    - https://223.5.5.5/dns-query
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
   respect-rules: true
 geo-auto-update: true
 geo-update-interval: 24
@@ -493,7 +493,15 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	probeBindingEnabled := false             // 是否开启了探针服务器绑定
 	var usedProbeServers map[string]struct{} // 订阅文件中使用的探针服务器列表
 
-	if username != "" && h.repo != nil {
+	// 读取系统配置，判断是否启用订阅响应头流量信息
+	enableSubTrafficHeader := true
+	if h.repo != nil {
+		if sysConfig, cfgErr := h.repo.GetSystemConfig(r.Context()); cfgErr == nil {
+			enableSubTrafficHeader = sysConfig.EnableSubTrafficHeader
+		}
+	}
+
+	if enableSubTrafficHeader && username != "" && h.repo != nil {
 		settings, err := h.repo.GetUserSettings(r.Context(), username)
 		if err == nil {
 			probeBindingEnabled = settings.EnableProbeBinding
@@ -557,6 +565,11 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 												// 如果过期时间为空，表示长期订阅，不跳过
 												if sub.Expire != nil && sub.Expire.Before(now) {
 													logger.Info("[Subscription] 跳过已过期的外部订阅", "name", sub.Name, "expire", sub.Expire.Format("2006-01-02 15:04:05"))
+													continue
+												}
+												// 如果流量模式为 "none"，跳过此订阅
+												if sub.TrafficMode == "none" {
+													logger.Info("[Subscription] 跳过不统计外部订阅", "name", sub.Name)
 													continue
 												}
 												if sub.Expire == nil {
@@ -691,10 +704,14 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	// 流量统计获取
 	stepStart = time.Now()
-	// 尝试获取流量信息，如果探针报错则跳过流量统计，不影响订阅输出
-	// 如果开启了探针绑定，只统计订阅文件中使用的节点绑定的探针服务器流量
-	totalLimit, _, totalUsed, err := h.summary.fetchTotals(r.Context(), username, usedProbeServers)
-	hasTrafficInfo := err == nil
+	var totalLimit, totalUsed int64
+	hasTrafficInfo := false
+	if enableSubTrafficHeader {
+		// 尝试获取流量信息，如果探针报错则跳过流量统计，不影响订阅输出
+		// 如果开启了探针绑定，只统计订阅文件中使用的节点绑定的探针服务器流量
+		totalLimit, _, totalUsed, err = h.summary.fetchTotals(r.Context(), username, usedProbeServers)
+		hasTrafficInfo = err == nil
+	}
 	logger.Info("[⏱️ 耗时监测] 流量统计获取完成", "step", "traffic_fetch", "duration_ms", time.Since(stepStart).Milliseconds())
 
 	// 使用订阅名称
@@ -804,26 +821,44 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	logger.Info("[⏱️ 耗时监测] YAML 重排序完成", "step", "yaml_reorder", "duration_ms", time.Since(stepStart).Milliseconds())
 
 	w.Header().Set("Content-Type", contentType)
-	// 只有在有流量信息时才添加 subscription-userinfo 头
-	if hasTrafficInfo || externalTrafficLimit > 0 {
+	// 只有在启用了订阅流量响应头且有流量信息时才添加 subscription-userinfo 头
+	if enableSubTrafficHeader && (hasTrafficInfo || externalTrafficLimit > 0) {
 		var finalLimit, finalUsed int64
 
-		// 判断是否需要包含探针流量：
-		// 1. 探针服务器绑定关闭时，始终包含探针流量
-		// 2. 探针服务器绑定开启时，只有使用了探针节点才包含探针流量
-		includeProbeTraffic := !probeBindingEnabled || usesProbeNodes
-
-		if includeProbeTraffic && hasTrafficInfo {
-			finalLimit = totalLimit + externalTrafficLimit
-			finalUsed = totalUsed + externalTrafficUsed
-			logger.Info("[Subscription] 最终流量统计", "user", username)
-			logger.Info("[Subscription] 探针流量", "limit_bytes", totalLimit, "limit_gb", float64(totalLimit)/(1024*1024*1024), "used_bytes", totalUsed, "used_gb", float64(totalUsed)/(1024*1024*1024))
+		if hasSubscribeFile && subscribeFile.StatsServerIDs != "" {
+			// 订阅文件配置了统计服务器，按 server_id 过滤探针流量（优先级最高）
+			idList := strings.Split(subscribeFile.StatsServerIDs, ",")
+			statsLimit, _, statsUsed, statsErr := h.summary.fetchTotalsByServerIDs(r.Context(), idList)
+			if statsErr == nil {
+				if subscribeFile.TrafficLimit != nil {
+					finalLimit = int64(*subscribeFile.TrafficLimit*1024*1024*1024) + externalTrafficLimit
+				} else {
+					finalLimit = statsLimit + externalTrafficLimit
+				}
+				finalUsed = statsUsed + externalTrafficUsed
+			} else {
+				finalLimit = externalTrafficLimit
+				finalUsed = externalTrafficUsed
+			}
+		} else if hasSubscribeFile && subscribeFile.TrafficLimit != nil {
+			// 仅配置了总流量上限，已用流量走原有逻辑
+			includeProbeTraffic := !probeBindingEnabled || usesProbeNodes
+			finalLimit = int64(*subscribeFile.TrafficLimit*1024*1024*1024) + externalTrafficLimit
+			if includeProbeTraffic && hasTrafficInfo {
+				finalUsed = totalUsed + externalTrafficUsed
+			} else {
+				finalUsed = externalTrafficUsed
+			}
 		} else {
-			// 仅统计外部订阅流量
-			finalLimit = externalTrafficLimit
-			finalUsed = externalTrafficUsed
-			logger.Info("[Subscription] 最终流量统计(仅外部订阅)", "user", username)
-			logger.Info("[Subscription] 探针流量未包含(探针绑定已开启但未使用探针节点)")
+			// 原有逻辑
+			includeProbeTraffic := !probeBindingEnabled || usesProbeNodes
+			if includeProbeTraffic && hasTrafficInfo {
+				finalLimit = totalLimit + externalTrafficLimit
+				finalUsed = totalUsed + externalTrafficUsed
+			} else {
+				finalLimit = externalTrafficLimit
+				finalUsed = externalTrafficUsed
+			}
 		}
 
 		logger.Info("[Subscription] 外部订阅流量", "limit_bytes", externalTrafficLimit, "limit_gb", float64(externalTrafficLimit)/(1024*1024*1024), "used_bytes", externalTrafficUsed, "used_gb", float64(externalTrafficUsed)/(1024*1024*1024))

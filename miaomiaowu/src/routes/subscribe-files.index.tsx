@@ -31,7 +31,7 @@ import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { Copy } from 'lucide-react'
-import { Upload, Download, Edit, Settings, FileText, Save, Trash2, RefreshCw, ChevronDown, ChevronUp, ExternalLink, Eye, Calendar as CalendarIcon, Plus, Check } from 'lucide-react'
+import { Upload, Download, Edit, Settings, FileText, Save, Trash2, RefreshCw, ChevronDown, ChevronUp, ExternalLink, Eye, Calendar as CalendarIcon, Plus, Check, Ban } from 'lucide-react'
 import { EditNodesDialog } from '@/components/edit-nodes-dialog'
 import { MobileEditNodesDialog } from '@/components/mobile-edit-nodes-dialog'
 import { Twemoji } from '@/components/twemoji'
@@ -60,6 +60,8 @@ type SubscribeFile = {
   selected_tags: string[]
   custom_short_code?: string
   raw_output: boolean
+  traffic_limit?: number | null
+  stats_server_ids: string
   expire_at?: string | null
   created_at: string
   updated_at: string
@@ -89,7 +91,7 @@ type ExternalSubscription = {
   download: number
   total: number
   expire: string | null
-  traffic_mode: 'download' | 'upload' | 'both'
+  traffic_mode: 'download' | 'upload' | 'both' | 'none'
   created_at: string
   updated_at: string
 }
@@ -302,6 +304,8 @@ function SubscribeFilesPage() {
   // 过期时间Popover状态
   const [expirePopoverFileId, setExpirePopoverFileId] = useState<number | null>(null)
   const [customDateFileId, setCustomDateFileId] = useState<number | null>(null)
+  const [mobileExpirePopoverFileId, setMobileExpirePopoverFileId] = useState<number | null>(null)
+  const [mobileCustomDateFileId, setMobileCustomDateFileId] = useState<number | null>(null)
 
   // 自定义连接Popover状态
   const [customLinkFileId, setCustomLinkFileId] = useState<number | null>(null)
@@ -356,6 +360,8 @@ function SubscribeFilesPage() {
     template_filename: '',
     selected_tags: [] as string[],
     expire: undefined as Date | undefined,
+    traffic_limit: '' as string,
+    stats_server_ids: '' as string,
   })
 
   // 外部订阅卡片折叠状态 - 默认折叠
@@ -368,7 +374,7 @@ function SubscribeFilesPage() {
     name: '',
     url: '',
     user_agent: '',
-    traffic_mode: 'both' as 'download' | 'upload' | 'both'
+    traffic_mode: 'both' as 'download' | 'upload' | 'both' | 'none'
   })
 
   // 代理集合对话框状态
@@ -429,6 +435,30 @@ function SubscribeFilesPage() {
 
   const files = filesData?.files ?? []
 
+  // 获取订阅流量数据（含探针总流量）
+  const { data: subscribeTrafficData } = useQuery({
+    queryKey: ['subscribe-traffic'],
+    queryFn: async () => {
+      const response = await api.get('/api/traffic/subscribe')
+      return response.data as {
+        items: Array<{ id: number; limit_gb: number; used_gb: number }>
+        probe_total?: { limit_gb: number; used_gb: number }
+      }
+    },
+    enabled: Boolean(auth.accessToken),
+    refetchInterval: 5 * 60 * 1000,
+  })
+  const subscribeTrafficMap = useMemo(() => {
+    const map = new Map<number, { limit_gb: number; used_gb: number }>()
+    if (subscribeTrafficData?.items) {
+      for (const item of subscribeTrafficData.items) {
+        map.set(item.id, item)
+      }
+    }
+    return map
+  }, [subscribeTrafficData])
+  const probeTotal = subscribeTrafficData?.probe_total
+
   // 获取 V3 模板列表
   const { data: templatesData } = useQuery({
     queryKey: ['template-v3-list'],
@@ -485,6 +515,21 @@ function SubscribeFilesPage() {
     enabled: Boolean(auth.accessToken && enableProxyProvider),
   })
   const proxyProviderConfigs = proxyProviderConfigsData ?? []
+
+  // 获取探针服务器列表（用于统计服务器选择）
+  const { data: probeConfigData } = useQuery({
+    queryKey: ['probe-config'],
+    queryFn: async () => {
+      const response = await api.get('/api/admin/probe-config')
+      return response.data as {
+        config: {
+          servers: Array<{ id: number; name: string; server_id: string }>
+        }
+      }
+    },
+    enabled: Boolean(auth.accessToken),
+  })
+  const probeServers = probeConfigData?.config?.servers ?? []
 
   // 绑定v3模板
   const hasTemplateBindings = files.some(f => f.template_filename)
@@ -637,7 +682,7 @@ function SubscribeFilesPage() {
       toast.success('订阅信息已更新')
       setEditMetadataDialogOpen(false)
       setEditingMetadata(null)
-      setMetadataForm({ name: '', description: '', filename: '', template_filename: '', selected_tags: [] })
+      setMetadataForm({ name: '', description: '', filename: '', template_filename: '', selected_tags: [], traffic_limit: '', stats_server_ids: '' })
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || '更新失败')
@@ -1405,13 +1450,15 @@ function SubscribeFilesPage() {
         setProxyGroups(groups)
         proxyGroupsOriginalRef.current = JSON.stringify(groups)
 
-        // Check for local draft
-        if (editingNodesFile) {
+        // Check for local draft — only when dialog is open
+        if (editingNodesFile && editNodesDialogOpen) {
           const draftJson = localStorage.getItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
           if (draftJson) {
             try {
               const draft = JSON.parse(draftJson)
-              if (JSON.stringify(draft.proxyGroups) !== JSON.stringify(groups)) {
+              // Compare only the meaningful fields to avoid false positives from property ordering
+              const normalize = (gs: any[]) => gs.map(g => ({ name: g.name, type: g.type, proxies: g.proxies, use: g.use }))
+              if (JSON.stringify(normalize(draft.proxyGroups)) !== JSON.stringify(normalize(groups))) {
                 pendingNodesDraftRef.current = draft
                 setIsNodesDraftRecoveryOpen(true)
               } else {
@@ -1427,13 +1474,13 @@ function SubscribeFilesPage() {
       console.error('解析YAML失败:', error)
       toast.error('解析配置文件失败')
     }
-  }, [nodesConfigQuery.data])
+  }, [nodesConfigQuery.data, editNodesDialogOpen])
 
   // Write edit-nodes draft to localStorage when proxyGroups change
   useEffect(() => {
     if (!editNodesDialogOpen || !editingNodesFile) return
-    const current = JSON.stringify(proxyGroups)
-    if (current === proxyGroupsOriginalRef.current) return
+    const normalize = (gs: any[]) => gs.map(g => ({ name: g.name, type: g.type, proxies: g.proxies, use: g.use }))
+    if (JSON.stringify(normalize(proxyGroups)) === JSON.stringify(normalize(JSON.parse(proxyGroupsOriginalRef.current || '[]')))) return
     localStorage.setItem(
       EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id,
       JSON.stringify({ proxyGroups, savedAt: Date.now() })
@@ -1519,6 +1566,8 @@ function SubscribeFilesPage() {
       template_filename: file.template_filename || '',
       selected_tags: file.selected_tags || [],
       expire: file.expire_at ? new Date(file.expire_at) : undefined,
+      traffic_limit: file.traffic_limit != null ? String(file.traffic_limit) : '',
+      stats_server_ids: file.stats_server_ids || '',
     })
     setEditMetadataDialogOpen(true)
   }
@@ -1548,6 +1597,8 @@ function SubscribeFilesPage() {
               return endOfDay.toISOString()
             })()
           : '',
+        traffic_limit: metadataForm.traffic_limit ? parseFloat(metadataForm.traffic_limit) : null,
+        stats_server_ids: metadataForm.stats_server_ids,
       },
     })
   }
@@ -1656,7 +1707,7 @@ function SubscribeFilesPage() {
   }
 
   // 应用缺失节点替换
-  const handleApplyReplacement = () => {
+  const handleApplyReplacement = async () => {
     try {
       const parsedConfig = parseYAML(pendingConfigAfterSave) as any
       const rules = parsedConfig.rules || []
@@ -1698,19 +1749,29 @@ function SubscribeFilesPage() {
 
       // 转换回YAML
       const finalConfig = dumpYAML(parsedConfig, { lineWidth: -1, noRefs: true })
+
+      // 保存到文件
+      if (editingNodesFile) {
+        await api.put(`/api/admin/subscribe-files/${encodeURIComponent(editingNodesFile.filename)}/content`, {
+          content: finalConfig,
+        })
+      }
+
       setConfigContent(finalConfig)
 
       // 更新查询缓存
-      queryClient.setQueryData(['nodes-config', editingNodesFile?.id], {
+      queryClient.setQueryData(['nodes-config-content', editingNodesFile?.filename], {
         content: finalConfig
       })
+      queryClient.invalidateQueries({ queryKey: ['subscribe-files'] })
 
-      // 只关闭替换对话框，不关闭编辑节点对话框
+      // 关闭替换对话框和编辑节点对话框
       setMissingNodesDialogOpen(false)
+      setEditNodesDialogOpen(false)
       if (editingNodesFile) {
         localStorage.removeItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
       }
-      toast.success(`已将缺失节点替换为 ${replacementChoice}`)
+      toast.success(`已保存节点配置（缺失节点已替换为 ${replacementChoice}）`)
     } catch (error) {
       const message = error instanceof Error ? error.message : '应用替换失败'
       toast.error(message)
@@ -2231,15 +2292,20 @@ function SubscribeFilesPage() {
         setPendingConfigAfterSave(newContent)
         setMissingNodesDialogOpen(true)
       } else {
-        // 没有缺失节点，直接应用
-        // 更新编辑配置对话框中的内容
+        // 没有缺失节点，直接保存到文件
+        await api.put(`/api/admin/subscribe-files/${encodeURIComponent(editingNodesFile.filename)}/content`, {
+          content: newContent,
+        })
         setConfigContent(newContent)
-        // 只关闭编辑节点对话框，不保存到文件
+        queryClient.setQueryData(['nodes-config-content', editingNodesFile?.filename], {
+          content: newContent
+        })
+        queryClient.invalidateQueries({ queryKey: ['subscribe-files'] })
         setEditNodesDialogOpen(false)
         if (editingNodesFile) {
           localStorage.removeItem(EDIT_NODES_DRAFT_KEY_PREFIX + editingNodesFile.id)
         }
-        toast.success('已应用节点配置')
+        toast.success('已保存节点配置')
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '应用配置失败'
@@ -2321,7 +2387,7 @@ function SubscribeFilesPage() {
           setConfigContent(newContent)
 
           // 更新 nodesConfigQuery 的缓存
-          queryClient.setQueryData(['nodes-config', editingNodesFile?.id], {
+          queryClient.setQueryData(['nodes-config-content', editingNodesFile?.filename], {
             content: newContent
           })
         }
@@ -3042,6 +3108,141 @@ function SubscribeFilesPage() {
                     width: '140px'
                   }] as DataTableColumn<SubscribeFile>[] : []),
                   {
+                    header: '流量',
+                    cell: (file) => {
+                      const traffic = subscribeTrafficMap.get(file.id)
+                      const isCustom = file.traffic_limit != null || !!file.stats_server_ids
+                      const displayTraffic = traffic || (probeTotal && probeTotal.limit_gb > 0 ? probeTotal : null)
+
+                      const progressBar = (() => {
+                        if (!displayTraffic || displayTraffic.limit_gb === 0) {
+                          return <span className='text-muted-foreground text-xs'>未配置探针</span>
+                        }
+                        const percentage = Math.min((displayTraffic.used_gb / displayTraffic.limit_gb) * 100, 100)
+                        const remainingGB = Math.max(displayTraffic.limit_gb - displayTraffic.used_gb, 0)
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className='w-20 space-y-1 cursor-pointer'>
+                                <Progress value={percentage} className='h-2' />
+                                <div className='text-xs text-center text-muted-foreground'>
+                                  {percentage.toFixed(0)}%{!isCustom && ' (默认)'}
+                                </div>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent className='space-y-1'>
+                              <div className='text-xs'>
+                                <span className='font-medium'>已用: </span>
+                                {displayTraffic.used_gb.toFixed(2)} GB
+                              </div>
+                              <div className='text-xs'>
+                                <span className='font-medium'>总量: </span>
+                                {displayTraffic.limit_gb.toFixed(2)} GB
+                              </div>
+                              <div className='text-xs'>
+                                <span className='font-medium'>剩余: </span>
+                                {remainingGB.toFixed(2)} GB
+                              </div>
+                              {!isCustom && <div className='text-xs text-muted-foreground'>点击可设置独立流量</div>}
+                            </TooltipContent>
+                          </Tooltip>
+                        )
+                      })()
+
+                      let trafficInputRef: HTMLInputElement | null = null
+
+                      return (
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <div className='cursor-pointer'>{progressBar}</div>
+                          </PopoverTrigger>
+                          <PopoverContent className='w-72 space-y-3' align='center'>
+                            <div className='space-y-1'>
+                              <Label className='text-xs'>总流量上限（GB）</Label>
+                              <Input
+                                type='number'
+                                min='0'
+                                step='0.01'
+                                placeholder='留空则使用探针总流量'
+                                defaultValue={file.traffic_limit != null ? String(file.traffic_limit) : ''}
+                                ref={(el) => { trafficInputRef = el }}
+                                className='h-8 text-sm'
+                              />
+                            </div>
+                            <div className='space-y-1'>
+                              <Label className='text-xs'>统计服务器</Label>
+                              {probeServers.length > 0 ? (
+                                <div className='flex flex-wrap gap-1'>
+                                  {probeServers.map((srv) => {
+                                    const currentIds = file.stats_server_ids ? file.stats_server_ids.split(',').map(s => s.trim()).filter(Boolean) : []
+                                    const isSelected = currentIds.includes(srv.server_id)
+                                    return (
+                                      <Button
+                                        key={srv.server_id}
+                                        variant={isSelected ? 'default' : 'outline'}
+                                        size='sm'
+                                        className='h-6 text-xs px-2'
+                                        onClick={() => {
+                                          const newIds = isSelected
+                                            ? currentIds.filter(id => id !== srv.server_id)
+                                            : [...currentIds, srv.server_id]
+                                          updateMetadataMutation.mutate({
+                                            id: file.id,
+                                            data: {
+                                              name: file.name,
+                                              description: file.description,
+                                              stats_server_ids: newIds.join(','),
+                                              traffic_limit: file.traffic_limit ?? null,
+                                            }
+                                          }, {
+                                            onSuccess: () => {
+                                              queryClient.invalidateQueries({ queryKey: ['subscribe-traffic'] })
+                                            }
+                                          })
+                                        }}
+                                        disabled={updateMetadataMutation.isPending}
+                                      >
+                                        {srv.name}
+                                      </Button>
+                                    )
+                                  })}
+                                </div>
+                              ) : (
+                                <p className='text-xs text-muted-foreground'>未配置探针</p>
+                              )}
+                            </div>
+                            <Button
+                              size='sm'
+                              className='w-full h-7 text-xs'
+                              disabled={updateMetadataMutation.isPending}
+                              onClick={() => {
+                                const val = trafficInputRef?.value ?? ''
+                                updateMetadataMutation.mutate({
+                                  id: file.id,
+                                  data: {
+                                    name: file.name,
+                                    description: file.description,
+                                    traffic_limit: val ? parseFloat(val) : null,
+                                    stats_server_ids: file.stats_server_ids,
+                                  }
+                                }, {
+                                  onSuccess: () => {
+                                    queryClient.invalidateQueries({ queryKey: ['subscribe-traffic'] })
+                                  }
+                                })
+                              }}
+                            >
+                              {updateMetadataMutation.isPending ? '保存中...' : '保存流量设置'}
+                            </Button>
+                          </PopoverContent>
+                        </Popover>
+                      )
+                    },
+                    headerClassName: 'text-center',
+                    cellClassName: 'text-center',
+                    width: '110px',
+                  },
+                  {
                     header: '操作',
                     cell: (file) => {
                       const idx = files.findIndex(f => f.id === file.id)
@@ -3194,6 +3395,153 @@ function SubscribeFilesPage() {
                           <span className='text-xs'>{file.auto_sync_custom_rules ? '已启用' : '未启用'}</span>
                         </div>
                       )
+                    },
+                    {
+                      label: '过期时间',
+                      value: (file) => {
+                        const handleQuickExpire = (days: number | 'expired' | Date) => {
+                          let newExpireAt: string | null = null
+
+                          if (days === 'expired') {
+                            newExpireAt = new Date().toISOString()
+                          } else if (days instanceof Date) {
+                            newExpireAt = days.toISOString()
+                          } else {
+                            const baseDate = file.expire_at ? new Date(file.expire_at) : new Date()
+                            newExpireAt = addDays(baseDate, days).toISOString()
+                          }
+
+                          updateMetadataMutation.mutate({
+                            id: file.id,
+                            data: {
+                              name: file.name,
+                              description: file.description,
+                              auto_sync_custom_rules: file.auto_sync_custom_rules,
+                              expire_at: newExpireAt,
+                            }
+                          }, {
+                            onSuccess: () => {
+                              setMobileExpirePopoverFileId(null)
+                              setMobileCustomDateFileId(null)
+                              toast.success('过期时间已更新')
+                            }
+                          })
+                        }
+
+                        const getExpirationStatus = () => {
+                          if (!file.expire_at) return null
+                          const expireDate = new Date(file.expire_at)
+                          if (isToday(expireDate)) {
+                            return { status: 'expiring', label: '今天过期', className: 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400' }
+                          }
+                          if (isPast(expireDate)) {
+                            return { status: 'expired', label: '已过期', className: 'bg-red-500/10 text-red-700 dark:text-red-400' }
+                          }
+                          const daysRemaining = differenceInCalendarDays(expireDate, new Date())
+                          if (daysRemaining <= 7) {
+                            return { status: 'expiring', label: `${daysRemaining}天后过期`, className: 'bg-yellow-500/10 text-yellow-700 dark:text-yellow-400' }
+                          }
+                          return { status: 'valid', label: format(expireDate, 'yyyy-MM-dd HH:mm'), className: 'bg-green-500/10 text-green-700 dark:text-green-400' }
+                        }
+
+                        const expirationStatus = getExpirationStatus()
+
+                        return (
+                          <Popover
+                            open={mobileExpirePopoverFileId === file.id}
+                            onOpenChange={(open) => setMobileExpirePopoverFileId(open ? file.id : null)}
+                          >
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant='ghost'
+                                size='sm'
+                                className='h-auto px-0 py-0'
+                              >
+                                {expirationStatus ? (
+                                  <Badge variant='outline' className={expirationStatus.className}>
+                                    {expirationStatus.label}
+                                  </Badge>
+                                ) : (
+                                  <span className='text-xs text-muted-foreground'>未设置</span>
+                                )}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className='w-auto p-2' align='start'>
+                              <div className='flex flex-col gap-2'>
+                                <Button
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={() => handleQuickExpire(30)}
+                                  disabled={updateMetadataMutation.isPending}
+                                >
+                                  延长30天
+                                </Button>
+                                <Button
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={() => handleQuickExpire('expired')}
+                                  disabled={updateMetadataMutation.isPending}
+                                >
+                                  标记过期
+                                </Button>
+                                <Popover
+                                  open={mobileCustomDateFileId === file.id}
+                                  onOpenChange={(open) => setMobileCustomDateFileId(open ? file.id : null)}
+                                >
+                                  <PopoverTrigger asChild>
+                                    <Button
+                                      variant='outline'
+                                      size='sm'
+                                    >
+                                      <CalendarIcon className='mr-2 h-4 w-4' />
+                                      选择时间
+                                    </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className='w-auto p-0' align='start'>
+                                    <Calendar
+                                      mode='single'
+                                      selected={file.expire_at ? new Date(file.expire_at) : undefined}
+                                      onSelect={(date) => {
+                                        if (date) {
+                                          handleQuickExpire(date)
+                                        }
+                                      }}
+                                      disabled={(date) => date < new Date()}
+                                      initialFocus
+                                    />
+                                  </PopoverContent>
+                                </Popover>
+                                {file.expire_at && (
+                                  <Button
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={() => {
+                                      updateMetadataMutation.mutate({
+                                        id: file.id,
+                                        data: {
+                                          name: file.name,
+                                          description: file.description,
+                                          auto_sync_custom_rules: file.auto_sync_custom_rules,
+                                          expire_at: null,
+                                        }
+                                      }, {
+                                        onSuccess: () => {
+                                          setMobileExpirePopoverFileId(null)
+                                          toast.success('已清除过期时间')
+                                        }
+                                      })
+                                    }}
+                                    disabled={updateMetadataMutation.isPending}
+                                    className='text-destructive hover:text-destructive'
+                                  >
+                                    清除过期时间
+                                  </Button>
+                                )}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        )
+                      }
                     }
                   ],
                   actions: (file) => (
@@ -3343,10 +3691,62 @@ function SubscribeFilesPage() {
                         }
                         // 根据 traffic_mode 计算已用流量
                         const mode = sub.traffic_mode || 'both'
+                        const modeLabel = mode === 'download' ? '仅下行' : mode === 'upload' ? '仅上行' : mode === 'none' ? '不统计' : '上下行'
+
+                        // 不统计模式：显示提示而不是进度条
+                        if (mode === 'none') {
+                          return (
+                            <div className='flex items-center gap-1'>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className='w-20 space-y-1 cursor-help'>
+                                    <div className='text-xs text-center text-muted-foreground'>
+                                      不统计
+                                    </div>
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent className='space-y-1'>
+                                  <div className='text-xs text-muted-foreground'>
+                                    统计方式: {modeLabel}
+                                  </div>
+                                  <div className='text-xs text-muted-foreground'>
+                                    此订阅的流量不计入总流量
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant='ghost'
+                                    size='icon'
+                                    className='h-6 w-6'
+                                    onClick={() => {
+                                      // 循环切换: both -> download -> upload -> none -> both
+                                      const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : mode === 'upload' ? 'none' : 'both'
+                                      updateExternalSubMutation.mutate({
+                                        id: sub.id,
+                                        name: sub.name,
+                                        url: sub.url,
+                                        user_agent: sub.user_agent,
+                                        traffic_mode: nextMode
+                                      })
+                                    }}
+                                    disabled={updateExternalSubMutation.isPending}
+                                  >
+                                    <Ban className='h-3 w-3' />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <span>切换统计方式: {modeLabel}</span>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                          )
+                        }
+
                         const used = mode === 'download' ? sub.download : mode === 'upload' ? sub.upload : sub.upload + sub.download
                         const percentage = Math.min((used / sub.total) * 100, 100)
                         const remaining = Math.max(sub.total - used, 0)
-                        const modeLabel = mode === 'download' ? '仅下行' : mode === 'upload' ? '仅上行' : '上下行'
                         return (
                           <div className='flex items-center gap-1'>
                             <Tooltip>
@@ -3387,8 +3787,8 @@ function SubscribeFilesPage() {
                                   size='icon'
                                   className='h-6 w-6'
                                   onClick={() => {
-                                    // 循环切换: both -> download -> upload -> both
-                                    const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : 'both'
+                                    // 循环切换: both -> download -> upload -> none -> both
+                                    const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : mode === 'upload' ? 'none' : 'both'
                                     updateExternalSubMutation.mutate({
                                       id: sub.id,
                                       name: sub.name,
@@ -3602,7 +4002,7 @@ function SubscribeFilesPage() {
                           const used = mode === 'download' ? sub.download : mode === 'upload' ? sub.upload : sub.upload + sub.download
                           const percentage = Math.min((used / sub.total) * 100, 100)
                           const remaining = Math.max(sub.total - used, 0)
-                          const modeLabel = mode === 'download' ? '仅下行' : mode === 'upload' ? '仅上行' : '上下行'
+                          const modeLabel = mode === 'download' ? '仅下行' : mode === 'upload' ? '仅上行' : mode === 'none' ? '不统计' : '上下行'
                           return (
                             <div className='flex items-center gap-2'>
                               <Tooltip>
@@ -3640,8 +4040,8 @@ function SubscribeFilesPage() {
                                     className='h-6 w-6 shrink-0'
                                     onClick={(e) => {
                                       e.stopPropagation()
-                                      // 循环切换: both -> download -> upload -> both
-                                      const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : 'both'
+                                      // 循环切换: both -> download -> upload -> none -> both
+                                      const nextMode = mode === 'both' ? 'download' : mode === 'download' ? 'upload' : mode === 'upload' ? 'none' :  'both'
                                       updateExternalSubMutation.mutate({
                                         id: sub.id,
                                         name: sub.name,
@@ -4349,17 +4749,17 @@ function SubscribeFilesPage() {
         setEditMetadataDialogOpen(open)
         if (!open) {
           setEditingMetadata(null)
-          setMetadataForm({ name: '', description: '', filename: '', template_filename: '', selected_tags: [], expire: undefined })
+          setMetadataForm({ name: '', description: '', filename: '', template_filename: '', selected_tags: [], expire: undefined, traffic_limit: '', stats_server_ids: '' })
         }
       }}>
-        <DialogContent className='sm:max-w-lg'>
+        <DialogContent className='sm:max-w-lg max-h-[90vh] flex flex-col'>
           <DialogHeader>
             <DialogTitle>编辑订阅信息</DialogTitle>
             <DialogDescription>
               修改订阅名称、说明和文件名
             </DialogDescription>
           </DialogHeader>
-          <div className='space-y-4 py-4'>
+          <div className='space-y-4 py-4 overflow-y-auto flex-1 min-h-0'>
             <div className='space-y-2'>
               <Label htmlFor='metadata-name'>订阅名称 *</Label>
               <Input
@@ -4532,8 +4932,58 @@ function SubscribeFilesPage() {
                 </p>
               </div>
             )}
+            <div className='space-y-2'>
+              <Label htmlFor='traffic-limit'>总流量上限（GB，可选）</Label>
+              <Input
+                id='traffic-limit'
+                type='number'
+                min='0'
+                step='0.01'
+                value={metadataForm.traffic_limit}
+                onChange={(e) => setMetadataForm({ ...metadataForm, traffic_limit: e.target.value })}
+                placeholder='留空则使用探针服务器的总流量'
+              />
+              <p className='text-xs text-muted-foreground'>
+                手动设置总流量上限，订阅信息中的总流量将使用此值。留空则跟随探针。
+              </p>
+            </div>
+            <div className='space-y-2'>
+              <Label>统计服务器（可选）</Label>
+              {probeServers.length > 0 ? (
+                <>
+                  <div className='flex flex-wrap gap-2'>
+                    {probeServers.map((srv) => {
+                      const selectedIds = metadataForm.stats_server_ids ? metadataForm.stats_server_ids.split(',').map(s => s.trim()).filter(Boolean) : []
+                      const isSelected = selectedIds.includes(srv.server_id)
+                      return (
+                        <Button
+                          key={srv.server_id}
+                          variant={isSelected ? 'default' : 'outline'}
+                          size='sm'
+                          onClick={() => {
+                            const newIds = isSelected
+                              ? selectedIds.filter(id => id !== srv.server_id)
+                              : [...selectedIds, srv.server_id]
+                            setMetadataForm({ ...metadataForm, stats_server_ids: newIds.join(',') })
+                          }}
+                        >
+                          {srv.name}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                  <p className='text-xs text-muted-foreground'>
+                    选择后，订阅信息中的已用流量将只统计选中服务器的流量。不选择则使用全部服务器。
+                  </p>
+                </>
+              ) : (
+                <p className='text-xs text-muted-foreground'>
+                  未配置探针服务器，请先在节点管理中配置探针。
+                </p>
+              )}
+            </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className='shrink-0'>
             <Button
               variant='outline'
               onClick={() => setEditMetadataDialogOpen(false)}
@@ -5499,7 +5949,7 @@ function SubscribeFilesPage() {
               <Label>流量统计方式</Label>
               <Select
                 value={editExternalSubForm.traffic_mode}
-                onValueChange={(value: 'download' | 'upload' | 'both') => setEditExternalSubForm(prev => ({ ...prev, traffic_mode: value }))}
+                onValueChange={(value: 'download' | 'upload' | 'both' | 'none') => setEditExternalSubForm(prev => ({ ...prev, traffic_mode: value }))}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -5508,6 +5958,7 @@ function SubscribeFilesPage() {
                   <SelectItem value='both'>上下行 (download + upload)</SelectItem>
                   <SelectItem value='download'>仅下行 (download)</SelectItem>
                   <SelectItem value='upload'>仅上行 (upload)</SelectItem>
+                  <SelectItem value='none'>不统计 (none)</SelectItem>
                 </SelectContent>
               </Select>
               <p className='text-xs text-muted-foreground'>

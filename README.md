@@ -43,7 +43,7 @@ docker run -d \
   -v $(pwd)/mmw-data:/app/data \
   -v $(pwd)/subscribes:/app/subscribes \
   -v $(pwd)/rule_templates:/app/rule_templates \
-  ghcr.io/jimleerx/miaomiaowu:latest
+  ghcr.io/iluobei/miaomiaowu:latest
 ```
 
 参数说明：
@@ -56,7 +56,7 @@ docker run -d \
 
 更新镜像后可执行：
 ```bash
-docker pull ghcr.io/jimleerx/miaomiaowu:latest
+docker pull ghcr.io/iluobei/miaomiaowu:latest
 docker stop miaomiaowu && docker rm miaomiaowu
 ```
 然后按照上方命令重新启动服务。
@@ -70,7 +70,7 @@ version: '3.8'
 
 services:
   miaomiaowu:
-    image: ghcr.io/jimleerx/miaomiaowu:latest
+    image: ghcr.io/iluobei/miaomiaowu:latest
     container_name: miaomiaowu
     restart: unless-stopped
     user: root
@@ -151,7 +151,7 @@ sudo cp -rf /var/lib/traffic-info/* /etc/mmw/
 **自动安装为 systemd 服务（Debian/Ubuntu）：**
 ```bash
 # 下载并运行安装脚本
-curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/install.sh | bash
 ```
 
 安装完成后，服务将自动启动，访问 `http://服务器IP:8080` 即可。
@@ -159,13 +159,13 @@ curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/install.sh |
 **更新到最新版本：**
 ```bash
 # systemd 服务更新
-curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/install.sh | sudo bash -s update
+curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/install.sh | sudo bash -s update
 ```
 
 **卸载服务：**
 ```bash
 # 卸载 systemd 服务（保留数据）
-curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/install.sh | sudo bash -s uninstall
+curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/install.sh | sudo bash -s uninstall
 
 # 卸载后如需完全清除数据，手动删除数据目录
 sudo rm -rf /etc/mmw
@@ -174,7 +174,7 @@ sudo rm -rf /etc/mmw
 **简易安装（手动运行）：**
 ```bash
 # 一键下载安装
-curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/quick-install.sh | bash
+curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/quick-install.sh | bash
 
 # 运行服务
 ./mmw
@@ -183,7 +183,7 @@ curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/quick-instal
 **卸载服务：**
 ```bash
 # 卸载 systemd 服务（保留数据）
-curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/quick-install.sh | sudo bash -s uninstall
+curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/quick-install.sh | sudo bash -s uninstall
 
 # 卸载后如需完全清除数据，手动删除数据目录
 sudo rm -rf ./data ./subscribes ./rule_templates
@@ -192,13 +192,13 @@ sudo rm -rf ./data ./subscribes ./rule_templates
 **更新简易安装版本：**
 ```bash
 # 更新到最新版本
-curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/quick-install.sh | bash -s update
+curl -sL https://raw.githubusercontent.com/iluobei/miaomiaowu/main/quick-install.sh | bash -s update
 ```
 
 **Windows：**
 ```powershell
 # 从 Releases 页面下载 mmw-windows-amd64.exe
-# https://github.com/Jimleerx/miaomiaowu/releases
+# https://github.com/iluobei/miaomiaowu/releases
 
 # 双击运行或在命令行中执行
 .\mmw-windows-amd64.exe
@@ -206,15 +206,15 @@ curl -sL https://raw.githubusercontent.com/Jimleerx/miaomiaowu/main/quick-instal
 <details>
 <summary>页面截图</summary>
 
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/traffic_info.png)  
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/subscribe_url.png)  
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/probe_datasource.png)  
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/subscribe_manage.png)  
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/generate_subscribe.png)  
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/custom_proxy_group.png)  
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/node_manage.png)  
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/user_manage.png)
-![image](https://github.com/Jimleerx/miaomiaowu/blob/main/screenshots/system_settings.png)
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/traffic_info.png)  
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/subscribe_url.png)  
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/probe_datasource.png)  
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/subscribe_manage.png)  
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/generate_subscribe.png)  
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/custom_proxy_group.png)  
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/node_manage.png)  
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/user_manage.png)
+![image](https://github.com/iluobei/miaomiaowu/blob/main/screenshots/system_settings.png)
 </details>
 
 ### 技术特点
@@ -244,12 +244,43 @@ MIT License
 
 ## 联系方式
 
-- 问题反馈：[GitHub Issues](https://github.com/Jimleerx/miaomiaowu/issues)
-- 功能建议：[GitHub Discussions](https://github.com/Jimleerx/miaomiaowu/discussions)
+- 问题反馈：[GitHub Issues](https://github.com/iluobei/miaomiaowu/issues)
+- 功能建议：[GitHub Discussions](https://github.com/iluobei/miaomiaowu/discussions)
 ## 更新日志
 <details>
 <summary>更新日志</summary>
 
+### v0.6.6 (2026-05-07)
+- 🌈 静态资源使用相对路径支持子路径代理[#78](https://github.com/iluobei/miaomiaowu/issues/78)
+- 🌈 支持naive与mieru协议[#76](https://github.com/iluobei/miaomiaowu/issues/76)
+- 🛠️ fix:编辑订阅信息溢出屏幕
+- 🛠️ fix:hy2 sni和server相同时没有设置sni
+- 🛠️ fix:stash dns配置优化
+- 🛠️ fix:hy2 password没有urldecode[#77](https://github.com/iluobei/miaomiaowu/issues/77)
+### v0.6.5 (2026-04-25)
+- 🛠️ fix:节点名称过滤的默认表达式无法删除[#70](https://github.com/iluobei/miaomiaowu/issues/70)
+- 🛠️ fix:订阅过期时间丢失
+### v0.6.4 (2026-04-19)
+- 🌈 新增订阅流量设置
+- 🌈 简化探针绑定服务器流量设置
+- 🌈 新增订阅流量响应头开关
+### v0.6.3 (2026-04-18)
+- 🛠️ fix:编辑节点应用并保存没有刷新缓存
+- 🛠️ fix:节点管理批量修改名称顺序错误与排序性能优化
+- 🛠️ fix:trojan security 默认为none
+- 🛠️ fix:dns 修改为 doh
+- 🛠️ fix:安装脚本不提示输入端口号
+### v0.6.2 (2026-04-10)
+- 🌈 绑定探针支持搜索与滚动
+- 🌈 编辑代理组节点支持选择分列数量
+- 🛠️ fix:trojan tls 总是为true
+- 🛠️ fix:移除小火箭vless enc判断
+- 🛠️ fix:编辑缓存重复提示
+### v0.6.1 (2026-04-01)
+- 🌈 增加了一个彩蛋
+- 🛠️ fix:loon vless丢失参数
+- 🛠️ fix:通用后端模板正则匹配支持GCX参数
+- 🛠️ fix:外部订阅节点过滤失效，增加兜底
 ### v0.6.0 (2026-03-29)
 - 🛠️ fix:v2通用后端模板正则匹配节点失效
 ### v0.5.9 (2026-03-28)
@@ -333,22 +364,22 @@ MIT License
 - 🌈 节点列表支持拖动标签排序
 - 🌈 增加tcping延迟探测
 - 🛠️ fix:base64格式外部订阅导入错误
-- 🛠️ fix:loon订阅缺少obfs参数[#51](https://github.com/Jimleerx/miaomiaowu/issues/51)
+- 🛠️ fix:loon订阅缺少obfs参数[#51](https://github.com/iluobei/miaomiaowu/issues/51)
 ### v0.4.7 (2026-01-20)
 - 🌈 增加两个防泄漏dns配置模板
 - 🌈 支持clashtosurge配置模板转换
-- 🛠️ fix:订阅过期默认配置文件错误[#48](https://github.com/Jimleerx/miaomiaowu/issues/48)
+- 🛠️ fix:订阅过期默认配置文件错误[#48](https://github.com/iluobei/miaomiaowu/issues/48)
 ### v0.4.6 (2026-01-17)
 - 🛠️ fix代理节点重复时自动去重
 - 🛠️ fix:国内服务没有把DIRECT放在第一位
-- 🛠️ fix:规则不允许修改类型[#40](https://github.com/Jimleerx/miaomiaowu/issues/40)
+- 🛠️ fix:规则不允许修改类型[#40](https://github.com/iluobei/miaomiaowu/issues/40)
 - 🛠️ fix:surge loon 协议sni参数处理
 - 🛠️ fix:qx vless协议缺少tls-host参数
 - 🛠️ fix:代理组配置校验缺少filter与Include-all
 ### v0.4.5 (2026-01-17)
 - 🌈 增加简单订阅过期功能
-- 🛠️ fix:代理集合的节点未更新[#49](https://github.com/Jimleerx/miaomiaowu/issues/49)
-- 🛠️ fix:订阅流量统计错误[#50](https://github.com/Jimleerx/miaomiaowu/issues/50)
+- 🛠️ fix:代理集合的节点未更新[#49](https://github.com/iluobei/miaomiaowu/issues/49)
+- 🛠️ fix:订阅流量统计错误[#50](https://github.com/iluobei/miaomiaowu/issues/50)
 - 🛠️ fix:模板中负载均衡类型的代理组未解析url
 - 🛠️ fix:导入外部订阅节点时保存的外部订阅名称没有使用用户输入的标签
 - 🛠️ fix:使用旧模板时因为格式检查无法生成
@@ -376,7 +407,7 @@ MIT License
 - 🌈 节点管理支持本地缓存记忆状态
 - 🌈 外部订阅地址支持修改
 - 🌈 使用虚拟dom减少页面卡顿
-- 🌈 合并生成订阅与添加代理组的预置代理组数据，代理组模板支持从github拉取 [proxy-groups.json](https://raw.githubusercontent.com/Jimleerx/miaomiaowu/refs/heads/main/proxy_groups/proxy-groups.default.json)
+- 🌈 合并生成订阅与添加代理组的预置代理组数据，代理组模板支持从github拉取 [proxy-groups.json](https://raw.githubusercontent.com/iluobei/miaomiaowu/refs/heads/main/proxy_groups/proxy-groups.default.json)
 - 🌈 添加代理组时支持选择emoji
 - 🌈 生成订阅页面节点支持排序
 - 🌈 优化代理组节点拖动性能
@@ -443,7 +474,7 @@ MIT License
 ### v0.2.9 (2025-12-17)
 - 🛠️ fix:hysteria2协议缺少obfs-password参数
 - 🛠️ fix:手机端不显示临时订阅按钮
-- 🛠️ fix:节点名称空格编码成+号[#31](https://github.com/Jimleerx/miaomiaowu/issues/31)
+- 🛠️ fix:节点名称空格编码成+号[#31](https://github.com/iluobei/miaomiaowu/issues/31)
 ### v0.2.8 (2025-12-14)
 - 🌈 支持导出带规则的stash配置
 - 🛠️ fix:ss plugin参数没有解析
@@ -486,28 +517,28 @@ MIT License
 - 🌈 增加短链接功能，防止token泄露
 - 🌈 模板增加默认dns配置
 - 🌈 重置token后再次获取定义返回假的配置，通过节点name提示token过期
-- 🌈 增加手动同步外部订阅按钮[#23](https://github.com/Jimleerx/miaomiaowu/issues/23)
+- 🌈 增加手动同步外部订阅按钮[#23](https://github.com/iluobei/miaomiaowu/issues/23)
 - 🌈 调整自动选择的代理组属性顺序
-- 🌈 增加自定义规则同步开关[#23](https://github.com/Jimleerx/miaomiaowu/issues/23)
+- 🌈 增加自定义规则同步开关[#23](https://github.com/iluobei/miaomiaowu/issues/23)
 - 🛠️ fix:修复拖动节点时光标闪烁
 - 🛠️ fix:修复一系列yaml操作产生的双引号、属性顺序错误问题
 ### v0.2.1 (2025-11-28)
 - 🌈 规则引用了不存在的代理组时支持替换为任意代理组
 - 🛠️ fix:节点列表快速复制节点为uri格式时缺少sni参数
-- 🛠️ fix:【BUG】端口配置莫名出现双引号[#22](https://github.com/Jimleerx/miaomiaowu/issues/22)
-- 🛠️ fix:处理yaml时没有保持原始格式[#22](https://github.com/Jimleerx/miaomiaowu/issues/22)
+- 🛠️ fix:【BUG】端口配置莫名出现双引号[#22](https://github.com/iluobei/miaomiaowu/issues/22)
+- 🛠️ fix:处理yaml时没有保持原始格式[#22](https://github.com/iluobei/miaomiaowu/issues/22)
 ### v0.2.0 (2025-11-27)
-- 🌈 可用节点支持名称与标签筛选[#21](https://github.com/Jimleerx/miaomiaowu/issues/21)
-- 🛠️ fix:订阅管理节点操作后，负载均衡相关参数消失[#22](https://github.com/Jimleerx/miaomiaowu/issues/22) 
+- 🌈 可用节点支持名称与标签筛选[#21](https://github.com/iluobei/miaomiaowu/issues/21)
+- 🛠️ fix:订阅管理节点操作后，负载均衡相关参数消失[#22](https://github.com/iluobei/miaomiaowu/issues/22) 
 ### v0.1.9 (2025-11-26)
 - 🛠️ fix:调整代理组的节点顺序时不再重新加载整个代理组列表跳回顶部  
 - 🛠️ fix:外部订阅节点信息变更一次后丢失外部订阅关联  
 - 🛠️ fix:short-id为""时，订阅种显示为空  
-- 🛠️ fix:(BUG) 代理组的属性顺序错误[#19](https://github.com/Jimleerx/miaomiaowu/issues/19)  
+- 🛠️ fix:(BUG) 代理组的属性顺序错误[#19](https://github.com/iluobei/miaomiaowu/issues/19)  
 ### v0.1.8 (2025-11-25)
-- 🌈 节点批量重命名[#15](https://github.com/Jimleerx/miaomiaowu/issues/15)
-- 🛠️ fix:节点删除后订阅里删不全，会留几个没有删掉[#17](https://github.com/Jimleerx/miaomiaowu/issues/17)
-- 🛠️ fix:(BUG) 某些情况下Vless节点的Short-id到订阅里会改变成指数[#18](https://github.com/Jimleerx/miaomiaowu/issues/18)
+- 🌈 节点批量重命名[#15](https://github.com/iluobei/miaomiaowu/issues/15)
+- 🛠️ fix:节点删除后订阅里删不全，会留几个没有删掉[#17](https://github.com/iluobei/miaomiaowu/issues/17)
+- 🛠️ fix:(BUG) 某些情况下Vless节点的Short-id到订阅里会改变成指数[#18](https://github.com/iluobei/miaomiaowu/issues/18)
 ### v0.1.7 (2025-11-24)
 - 🛠️ fix:哪吒V0不同版本服务器地址兼容
 - 🛠️ fix:节点管理无法解析ssr类型

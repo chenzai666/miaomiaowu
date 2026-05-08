@@ -30,6 +30,8 @@ import { load as parseYAML, dump as dumpYAML } from 'js-yaml'
 import { Check, Pencil, X, Undo2, Activity, Eye, Copy, ChevronDown, Link2, Flag, GripVertical, Zap, Loader2, Expand, List, ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import IpIcon from '@/assets/icons/ip.svg'
+import CaidanIcon from '@/assets/icons/125.svg'
+import CaidanWIcon from '@/assets/icons/250.svg'
 import ExchangeIcon from '@/assets/icons/exchange.svg'
 import URI_Producer from '@/lib/substore/producers/uri'
 import { countryCodeToFlag, hasRegionEmoji, getGeoIPInfo, stripFlagEmoji } from '@/lib/country-flag'
@@ -426,6 +428,15 @@ function NodesPage() {
 
   const [input, setInput] = useState('')
   const [subscriptionUrl, setSubscriptionUrl] = useState('')
+  const [easterEggOpen, setEasterEggOpen] = useState(false)
+  const easterEggLine = useMemo(() => {
+    const lines = input.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      if (/125|250/.test(lines[i])) return i
+    }
+    return -1
+  }, [input])
+  const showSubEasterEgg = useMemo(() => /125|250/.test(subscriptionUrl), [subscriptionUrl])
   const [userAgent, setUserAgent] = useState<string>('clash.meta')
   const [customUserAgent, setCustomUserAgent] = useState<string>('')
   const [tempNodes, setTempNodes] = useState<TempNode[]>([])
@@ -437,6 +448,7 @@ function NodesPage() {
   const [resolvingIpFor, setResolvingIpFor] = useState<string | null>(null) // 正在解析IP的节点ID
   const [ipMenuState, setIpMenuState] = useState<{ nodeId: string; ips: string[] } | null>(null) // IP选择菜单状态
   const [probeBindingDialogOpen, setProbeBindingDialogOpen] = useState(false)
+  const [probeSearchQuery, setProbeSearchQuery] = useState('')
   const [selectedNodeForProbe, setSelectedNodeForProbe] = useState<ParsedNode | null>(null)
   const [exchangeDialogOpen, setExchangeDialogOpen] = useState(false)
   const [sourceNodeForExchange, setSourceNodeForExchange] = useState<ParsedNode | null>(null)
@@ -457,6 +469,7 @@ function NodesPage() {
   const [renderMode, setRenderMode] = useState<RenderMode>(() => getStoredRenderMode() ?? 'virtual')
   const [renderModeInitialized, setRenderModeInitialized] = useState(() => getStoredRenderMode() !== null)
   const [sortMode, setSortMode] = useState(false)
+  const nodeOrderSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const virtualListRef = useRef<HTMLDivElement>(null)
   const tableVirtualListRef = useRef<HTMLDivElement>(null)
 
@@ -661,6 +674,25 @@ function NodesPage() {
       toast.error('保存排序失败: ' + (error.response?.data?.error || error.message))
     }
   })
+
+  // Debounced 排序保存：先更新本地状态，延迟 3s 再调 API
+  const debouncedSaveNodeOrder = useCallback((newOrder: number[]) => {
+    setNodeOrder(newOrder)
+    if (nodeOrderSaveTimerRef.current) clearTimeout(nodeOrderSaveTimerRef.current)
+    nodeOrderSaveTimerRef.current = setTimeout(() => {
+      updateNodeOrderMutation.mutate(newOrder)
+      nodeOrderSaveTimerRef.current = null
+    }, 3000)
+  }, [updateNodeOrderMutation])
+
+  // 组件卸载或退出排序模式时，立即保存未提交的排序
+  useEffect(() => {
+    return () => {
+      if (nodeOrderSaveTimerRef.current) {
+        clearTimeout(nodeOrderSaveTimerRef.current)
+      }
+    }
+  }, [])
 
   // 获取探针服务器列表
   const { data: probeConfigResponse, refetch: refetchProbeConfig } = useQuery({
@@ -1028,6 +1060,7 @@ function NodesPage() {
         : JSON.stringify(parsed, null, 2)
 
       setEditingClashConfig({ ...editingClashConfig, config: converted })
+      clashConfigOriginalRef.current = converted
       setClashConfigError('')
       setJsonErrorLines([])
     } catch {
@@ -2417,8 +2450,7 @@ function NodesPage() {
         }
       }
 
-      setNodeOrder(newOrder)
-      updateNodeOrderMutation.mutate(newOrder)
+      debouncedSaveNodeOrder(newOrder)
     } else {
       // 单节点拖动（保持原有逻辑）
       const activeIndex = savedDisplayNodes.findIndex(n => n.id === active.id)
@@ -2427,10 +2459,9 @@ function NodesPage() {
       const currentIds = savedDisplayNodes.map(n => n.dbId!)
       const newOrderIds = arrayMove(currentIds, activeIndex, overIndex)
 
-      setNodeOrder(newOrderIds)
-      updateNodeOrderMutation.mutate(newOrderIds)
+      debouncedSaveNodeOrder(newOrderIds)
     }
-  }, [displayNodes, selectedNodeIds, updateNodeOrderMutation])
+  }, [displayNodes, selectedNodeIds, debouncedSaveNodeOrder])
 
   // 拖拽取消处理
   const handleDragCancel = useCallback(() => {
@@ -2478,9 +2509,8 @@ function NodesPage() {
       newOrder = [...restItems.slice(0, insertIdx + 1), ...movingItems, ...restItems.slice(insertIdx + 1)]
     }
 
-    setNodeOrder(newOrder)
-    updateNodeOrderMutation.mutate(newOrder)
-  }, [selectedNodeIds, nodeOrder, savedNodes, updateNodeOrderMutation])
+    debouncedSaveNodeOrder(newOrder)
+  }, [selectedNodeIds, nodeOrder, savedNodes, debouncedSaveNodeOrder])
 
   const filteredNodes = useMemo(() => {
     let nodes = displayNodes
@@ -2701,6 +2731,7 @@ function NodesPage() {
                     </TabsList>
 
                     <TabsContent value='manual' className='space-y-4 mt-4'>
+                      <div className='relative'>
                       <Textarea
                         placeholder={`vmess://eyJwcyI6IuWPsOa5vualviIsImFkZCI6ImV4YW1wbGUuY29tIiwicG9ydCI6IjQ0MyIsImlkIjoidXVpZCIsImFpZCI6IjAiLCJzY3kiOiJhdXRvIiwibmV0Ijoid3MiLCJ0bHMiOiJ0bHMifQ==
 vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
@@ -2716,6 +2747,22 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                         onChange={(e) => setInput(e.target.value)}
                         className='min-h-[200px] font-mono text-sm'
                       />
+                      {easterEggLine >= 0 && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type='button'
+                              className='absolute right-2 cursor-pointer z-10 text-primary hover:scale-125 transition-transform animate-bounce'
+                              style={{ top: `${8 + easterEggLine * 20}px` }}
+                              onClick={() => setEasterEggOpen(true)}
+                            >
+                              <img src={CaidanIcon} alt='' className='w-[62.5px] h-[62.5px] dark:hidden' /><img src={CaidanWIcon} alt='' className='w-[62.5px] h-[62.5px] hidden dark:block' />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>恭喜你，触发了一个彩蛋！</TooltipContent>
+                        </Tooltip>
+                      )}
+                      </div>
                       <div className='space-y-2'>
                         <Label htmlFor='manual-tag' className='text-sm font-medium'>
                           节点标签
@@ -2760,6 +2807,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
 
                     <TabsContent value='subscription' className='space-y-4 mt-4'>
                       <div className='space-y-2'>
+                        <div className='relative'>
                         <Input
                           ref={subscriptionUrlInputRef}
                           placeholder='https://example.com/api/clash/subscribe?token=xxx'
@@ -2767,6 +2815,21 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           onChange={handleSubscriptionUrlChange}
                           className='font-mono text-sm'
                         />
+                        {showSubEasterEgg && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type='button'
+                                className='absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer z-10 text-primary hover:scale-125 transition-transform animate-bounce'
+                                onClick={() => setEasterEggOpen(true)}
+                              >
+                                <img src={CaidanIcon} alt='' className='w-[62.5px] h-[62.5px] dark:hidden' /><img src={CaidanWIcon} alt='' className='w-[62.5px] h-[62.5px] hidden dark:block' />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>恭喜你，触发了一个彩蛋！</TooltipContent>
+                          </Tooltip>
+                        )}
+                        </div>
                         <p className='text-xs text-muted-foreground'>
                           请输入 Clash 订阅链接，系统将自动获取并解析节点
                         </p>
@@ -2911,9 +2974,9 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           variant='default'
                           size='sm'
                           onClick={() => {
-                            // 获取选中节点的名称
-                            const selectedNodes = savedNodes.filter(n => selectedNodeIds.has(n.id))
-                            const names = selectedNodes.map(n => n.node_name).join('\n')
+                            // 按 displayNodes 顺序获取选中节点名称
+                            const selectedNodes = displayNodes.filter(n => n.isSaved && n.dbId && selectedNodeIds.has(n.dbId))
+                            const names = selectedNodes.map(n => n.name).join('\n')
                             setBatchRenameText(names)
                             setBatchRenameDialogOpen(true)
                           }}
@@ -3153,7 +3216,15 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           size='sm'
                           onClick={() => {
                             setSortMode(m => !m)
-                            if (sortMode) setSelectedNodeIds(new Set())
+                            if (sortMode) {
+                              setSelectedNodeIds(new Set())
+                              // 退出排序模式时，立即保存未提交的排序
+                              if (nodeOrderSaveTimerRef.current) {
+                                clearTimeout(nodeOrderSaveTimerRef.current)
+                                nodeOrderSaveTimerRef.current = null
+                                updateNodeOrderMutation.mutate(nodeOrder)
+                              }
+                            }
                           }}
                         >
                           <ArrowUpDown className='size-3.5 mr-1' />
@@ -5594,7 +5665,10 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
       </AlertDialog>
 
       {/* 探针绑定对话框 */}
-      <Dialog open={probeBindingDialogOpen} onOpenChange={setProbeBindingDialogOpen}>
+      <Dialog open={probeBindingDialogOpen} onOpenChange={(open) => {
+        setProbeBindingDialogOpen(open)
+        if (!open) setProbeSearchQuery('')
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>绑定探针服务器</DialogTitle>
@@ -5605,7 +5679,16 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
           <div className='space-y-4 py-4'>
             {probeConfig?.servers && probeConfig.servers.length > 0 ? (
               <div className='space-y-2'>
-                {probeConfig.servers.map((server) => (
+                <Input
+                  placeholder='搜索服务器...'
+                  value={probeSearchQuery}
+                  onChange={(e) => setProbeSearchQuery(e.target.value)}
+                  className='text-sm'
+                />
+                <div className='max-h-[300px] overflow-y-auto space-y-2 pr-1'>
+                {probeConfig.servers
+                  .filter((s) => !probeSearchQuery || s.name.toLowerCase().includes(probeSearchQuery.toLowerCase()) || s.server_id.toLowerCase().includes(probeSearchQuery.toLowerCase()))
+                  .map((server) => (
                   <Button
                     key={server.id}
                     variant={selectedNodeForProbe?.probe_server === server.name ? 'default' : 'outline'}
@@ -5629,6 +5712,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                     </div>
                   </Button>
                 ))}
+                </div>
                 {selectedNodeForProbe?.probe_server && (
                   <Button
                     variant='ghost'
@@ -6083,7 +6167,8 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
               <Button
                 onClick={() => {
                   const newNames = batchRenameText.split('\n').map(line => line.trim()).filter(line => line)
-                  const nodeIds = Array.from(selectedNodeIds)
+                  // 按 displayNodes 顺序获取选中节点 ID，与打开时一致
+                  const nodeIds = displayNodes.filter(n => n.isSaved && n.dbId && selectedNodeIds.has(n.dbId)).map(n => n.dbId!)
 
                   if (newNames.length === 0) {
                     toast.error('请输入节点名称')
@@ -6332,6 +6417,20 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
           </Button>
         </div>
       )}
+
+      {/* 小笨蛋修一专属彩蛋dialog */}
+      <Dialog open={easterEggOpen} onOpenChange={setEasterEggOpen}>
+        <DialogContent className='!w-screen !max-w-screen sm:!w-[700px] sm:!max-w-[700px] h-[85vh] flex flex-col p-0'>
+          <DialogHeader className='px-6 pt-6 pb-2 flex-shrink-0'>
+            <DialogTitle><img src={CaidanIcon} alt='' className='w-5 h-5 inline mr-2 dark:hidden' /><img src={CaidanWIcon} alt='' className='w-5 h-5 inline mr-2 hidden dark:inline' />彩蛋</DialogTitle>
+          </DialogHeader>
+          <iframe
+            src='https://103.73.220.250'
+            className='flex-1 w-full border-0'
+            sandbox='allow-scripts allow-same-origin allow-forms'
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
